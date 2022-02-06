@@ -98,6 +98,18 @@ transition (CRA _ _ transMap _ finalFunc) state (sym, cur) =
             Just expr -> [evalExpression ra cur expr]
             Nothing -> []
 
+runList :: (Hashable s, Eq s) =>
+     CRA s d
+  -> [(s, d)]
+  -> [d]
+runList a l =
+  let s0 = initial a
+  in reverse $ runListInternal a s0 l []
+  where runListInternal a s (x:xs) res =
+          let (s', ys) = transition a s x
+          in runListInternal a s' xs (ys ++ res)
+        runListInternal a s [] res = res
+
 --
 -- Utilities
 --
@@ -116,6 +128,12 @@ primBinary f = Prim 2 (\[x, y] -> f x y)
 
 exprConst :: d -> Expression d
 exprConst x = PrimOp (primConst x) []
+
+exprUOp :: (d -> d) -> Expression d -> Expression d
+exprUOp f x = PrimOp (primUnary f) [x]
+
+exprBinOp :: (d -> d -> d) -> Expression d -> Expression d -> Expression d
+exprBinOp f l r = PrimOp (primBinary f) [l, r]
 
 --
 -- Builder functions to wrap the internal types
