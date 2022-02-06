@@ -3,7 +3,7 @@ module Main where
 import CRA
 
 --
--- Example 3 from Alur, et al., "Streamable Regular Transductions", Elsevier, 2019
+-- Example 3 from Alur et al., "Streamable Regular Transductions", Elsevier, 2019.
 -- Counts the number of 'a's and 'b's emitting the count of the most recent tag.
 --
 testCRA1 :: CRA Char Int
@@ -23,6 +23,11 @@ testCRA1 =
         ]
   in buildCRA transitions initF finalF
 
+--
+-- Example 5 from Alur et al., 2019.
+-- Computes a sum of all 'a'-tagged elements between '#' tags 
+-- and produces the maximum sum computed so far on each '#' tag.
+--
 testCRA2 :: CRA Char Int
 testCRA2 =
   let initOp = buildUpdateOp [exprConst 0, exprConst 0]
@@ -37,6 +42,24 @@ testCRA2 =
         ]
   in buildCRA transitions initF finalF
 
+--
+-- Example 6 from Alur et al., 2019.
+-- Computes the maximum drawdown since the last 'b'-tagged element.
+--
+testCRA3 :: CRA Char Int
+testCRA3 =
+  let initOp = buildUpdateOp [exprConst 0, exprConst 0]
+      theta = buildUpdateOp [exprBinOp max (RegRead 1) CurVal, exprBinOp max (RegRead 2) (exprBinOp (-) (exprBinOp max (RegRead 1) CurVal) CurVal)]
+      initF = buildInitFunc [(1, initOp)]
+      finalF = buildFinalFunc [(2, RegRead 2)]
+      transitions = [
+          Transition 1 'a' initOp 1,
+          Transition 1 'b' initOp 1,
+          Transition 1 'b' initOp 2,
+          Transition 2 'a' theta 2,
+          Transition 2 'b' initOp 3
+        ]
+  in buildCRA transitions initF finalF
 
 main :: IO ()
 main = do

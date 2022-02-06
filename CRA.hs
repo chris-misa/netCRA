@@ -7,8 +7,16 @@
 module CRA where
 
 import Data.Function ((&))
-import Data.HashMap.Strict as M -- from unordered-containers
+import qualified Data.HashMap.Strict as M -- from unordered-containers
 import Data.Hashable (Hashable)
+
+-- TODO: support for non-determinism
+-- 1. States must be map from state ids to a list of each register assignment currently at that state
+-- 2. TransitionMap must support multiple transitions for each state, symbol key
+-- 3. Need to deal with removing runs when they're done...somehow... the semantics for this might not be clear
+--      In particular, what happens when a state does not transition at all given the current symbol?
+--      1. Just stays there---might transition via a future symbol
+--      2. Terminates (and can be removed). ......this option seems easier to reason about and cleaner. Because a run of the automaton must use every input symbol in order, this is actually the only option consistent with the semantics.
 
 -- A primitive operation is an operation of arbitrary arity with all arguments and result in d
 data Prim d = Prim Int ([d] -> d)
@@ -25,7 +33,7 @@ type UpdateOp d = M.HashMap Int (Expression d)
 
 -- Transition and transition map describe transitions and map between state, symbol pairs and the corresponding transition
 data Transition s d = Transition Int s (UpdateOp d) Int
-type TransitionMap s d = M.HashMap (Int, s) (Transition s d)
+type TransitionMap s d = M.HashMap (Int, s) [Transition s d]
 
 -- Mapping between initial states (by state id) and operations to produce initial register assignments for those states
 type InitFunc d = M.HashMap Int (UpdateOp d)
@@ -37,8 +45,8 @@ type FinalFunc d = M.HashMap Int (Expression d)
 -- Note that register assignments can be partial (e.g., the register assignment handed to the very first update operation)
 type RegAssign d = M.HashMap Int d
 
--- Map between active states (by state id) and their associated register assignments
-type State d = M.HashMap Int (RegAssign d)
+-- Map between active states (by state id) and the active register assignments at each state.
+type State d = M.HashMap Int [RegAssign d]
 
 -- CRA num_states num_registers transitions initialization_func finalization_func
 data (Hashable s, Eq s) => CRA s d = CRA Int Int (TransitionMap s d) (InitFunc d) (FinalFunc d)
@@ -78,7 +86,7 @@ initial :: (Hashable s, Eq s) =>
   -> State d
 initial (CRA _ _ _ initFunc _) =
   M.map getInitRegAssign initFunc
-  where getInitRegAssign u = evalUpdateOp emptyRegAssign (error $ "Init expr has cur!") u
+  where getInitRegAssign u = [evalUpdateOp emptyRegAssign (error $ "Init expr has cur!") u]
 
 transition :: (Hashable s, Eq s) =>
      CRA s d
@@ -86,17 +94,27 @@ transition :: (Hashable s, Eq s) =>
   -> (s, d)
   -> (State d, [d])
 transition (CRA _ _ transMap _ finalFunc) state (sym, cur) =
-  let state' = state & M.toList & fmap doTransition & M.fromList
+  let state' = state & M.toList & concatMap doTransition & buildState
       res = state' & M.toList & concatMap doFinal
   in (state', res)
-  where doTransition (q, ra) =
+
+  where doTransition (q, ras) =
           case M.lookup (q, sym) transMap of
-            Just (Transition _ _ u q') -> (q', evalUpdateOp ra cur u)
-            Nothing -> error $ "No transition for symbol!"
-        doFinal (q, ra) =
-          case M.lookup q finalFunc of
-            Just expr -> [evalExpression ra cur expr]
+            Just ts ->
+              let tsras = [(t, ra) | t <- ts, ra <- ras]
+              in fmap (\(Transition _ _ u q', ra) -> (q', evalUpdateOp ra cur u)) tsras
             Nothing -> []
+
+        doFinal (q, ras) =
+          case M.lookup q finalFunc of
+            Just expr -> fmap (\ra -> evalExpression ra cur expr) ras
+            Nothing -> []
+
+        buildState ras =
+          ras & foldl addToMap M.empty
+          where addToMap m (q, ra) = M.alter f q m
+                  where f Nothing = Just [ra]
+                        f (Just prev) = Just (ra:prev)
 
 runList :: (Hashable s, Eq s) =>
      CRA s d
@@ -166,5 +184,10 @@ buildCRA :: (Hashable s, Eq s) =>
   -> CRA s d
 buildCRA trans init final =
   let keyTrans t@(Transition q s _ _) = ((q, s), t)
-      transMap = trans & fmap keyTrans & M.fromList
+      transMap = trans & fmap keyTrans & foldl addToMap M.empty
   in CRA 0 0 transMap init final
+  where addToMap m (k, t) = M.alter f k m
+          where f Nothing = Just [t]
+                f (Just prev) = Just (t:prev)
+
+
