@@ -10,14 +10,6 @@ import Data.Function ((&))
 import qualified Data.HashMap.Strict as M -- from unordered-containers
 import Data.Hashable (Hashable)
 
--- TODO: support for non-determinism
--- 1. States must be map from state ids to a list of each register assignment currently at that state
--- 2. TransitionMap must support multiple transitions for each state, symbol key
--- 3. Need to deal with removing runs when they're done...somehow... the semantics for this might not be clear
---      In particular, what happens when a state does not transition at all given the current symbol?
---      1. Just stays there---might transition via a future symbol
---      2. Terminates (and can be removed). ......this option seems easier to reason about and cleaner. Because a run of the automaton must use every input symbol in order, this is actually the only option consistent with the semantics.
-
 -- A primitive operation is an operation of arbitrary arity with all arguments and result in d
 data Prim d = Prim Int ([d] -> d)
 
@@ -189,5 +181,4 @@ buildCRA trans init final =
   where addToMap m (k, t) = M.alter f k m
           where f Nothing = Just [t]
                 f (Just prev) = Just (t:prev)
-
 
