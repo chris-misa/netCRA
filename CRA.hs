@@ -34,7 +34,7 @@ showUpdate u = u & M.toList & fmap (\(r, e) -> "      " ++ show r ++ " <- " ++ s
 data Transition s d = Transition Int s (UpdateOp d) Int
 instance (Show s, Show d) => Show (Transition s d) where
   show (Transition q s u t) = 
-    show (q,s) ++ " -> " ++ show t ++ " with \n" ++ showUpdate u
+    show q ++ " -> " ++ show t ++ " on " ++ show s ++ " with \n" ++ showUpdate u
 
 type TransitionMap s d = M.HashMap (Int, s) [Transition s d]
 
@@ -256,8 +256,8 @@ updateUpdateOp regMap u =
 --
 -- Output: (combinedCRA, (leftStateMap, leftRegisterMap), (rightStateMap, rightRegisterMap))
 -- 
--- Note that the final function of the combinedCRA is left empty assuming the caller wants
--- to construct their own final function.
+-- Note that the init and final functions of the combinedCRA are left empty because each
+-- QRE operator has a different semantic about which states should be init/final.
 --
 combine :: (Hashable s, Eq s, Ord s) =>
      CRA s d
@@ -315,15 +315,7 @@ combine (CRA numStatesL numRegsL transitionsL initL finalL) (CRA numStatesR numR
         & concatMap oneTransition
         & buildTransitionMap
 
-      
-      init = ((M.toList initL & concatMap (updateKey stateMapL regMapL))
-           ++ (M.toList initR & concatMap (updateKey stateMapR regMapR)))
-           & M.fromListWith M.union
-        where updateKey stateMap regMap (q, u) = [(q', updateUpdateOp regMap u) | q' <- stateMap M.! q]
-
-      final = M.empty
-
-  in (CRA numStates numRegs transitions init final, (stateMapL, regMapL), (stateMapR, regMapR))
+  in (CRA numStates numRegs transitions M.empty M.empty, (stateMapL, regMapL), (stateMapR, regMapR))
 
 -- first come up with id maps...
 -- then create new CRA applying them...

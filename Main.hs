@@ -59,10 +59,9 @@ testCRA3 =
           Transition 1 'a' initOp 1,
           Transition 1 'b' initOp 1,
           Transition 1 'b' initOp 2,
-          Transition 2 'a' theta 2,
-          Transition 2 'b' initOp 3
+          Transition 2 'a' theta 2
         ]
-  in buildCRA 3 2 transitions initF finalF
+  in buildCRA 2 2 transitions initF finalF
 
 main :: IO ()
 main = do
