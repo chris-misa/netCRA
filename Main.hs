@@ -63,6 +63,34 @@ testCRA3 =
         ]
   in buildCRA 2 2 transitions initF finalF
 
+--
+-- Simple tests of termination
+--
+termOnB :: CRA Char Int
+termOnB =
+  let noop = buildUpdateOp []
+      initF = buildInitFunc [(1, noop)]
+      finalF = buildFinalFunc [(2, CurVal)]
+      transitions = [
+          Transition 1 'a' noop 1,
+          Transition 1 'c' noop 1,
+          Transition 1 'b' noop 2
+        ]
+  in buildCRA 2 0 transitions initF finalF
+
+termOnC :: CRA Char Int
+termOnC =
+  let noop = buildUpdateOp []
+      initF = buildInitFunc [(1, noop)]
+      finalF = buildFinalFunc [(2, CurVal)]
+      transitions = [
+          Transition 1 'a' noop 1,
+          Transition 1 'b' noop 1,
+          Transition 1 'c' noop 2
+        ]
+  in buildCRA 2 0 transitions initF finalF
+
+
 main :: IO ()
 main = do
   putStrLn "Hello, Haskell!"

@@ -42,8 +42,8 @@ atom yesSym noSym dat =
         ]
   in buildCRA 2 0 transitions initF finalF
 
--- Run list of CRAs in parallel and combine the outputs (when defined) using the given function
-op :: Prim d -> [CRA s d] -> CRA s d
+-- Run two CRAs in parallel and combine the outputs (when defined) using the given function
+op :: Prim d -> CRA s d -> CRA s d -> CRA s d
 op = undefined
 {-
 State space: product of state spaces of both inputs
