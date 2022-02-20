@@ -1,6 +1,9 @@
 module Main where
 
+import Data.Function ((&))
+
 import CRA
+import QRE
 
 --
 -- Example 3 from Alur et al., "Streamable Regular Transductions", Elsevier, 2019.
@@ -21,7 +24,7 @@ testCRA1 =
           Transition 3 'b' addB 3,
           Transition 3 'a' addA 2
         ]
-  in buildCRA transitions initF finalF
+  in buildCRA 3 2 transitions initF finalF
 
 --
 -- Example 5 from Alur et al., 2019.
@@ -40,7 +43,7 @@ testCRA2 =
           Transition 2 'a' addVal 2,
           Transition 2 '#' maxVal 1
         ]
-  in buildCRA transitions initF finalF
+  in buildCRA 2 2 transitions initF finalF
 
 --
 -- Example 6 from Alur et al., 2019.
@@ -59,7 +62,7 @@ testCRA3 =
           Transition 2 'a' theta 2,
           Transition 2 'b' initOp 3
         ]
-  in buildCRA transitions initF finalF
+  in buildCRA 3 2 transitions initF finalF
 
 main :: IO ()
 main = do

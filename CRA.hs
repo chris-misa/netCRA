@@ -7,24 +7,35 @@
 module CRA where
 
 import Data.Function ((&))
+import qualified Data.List as L
 import qualified Data.HashMap.Strict as M -- from unordered-containers
 import Data.Hashable (Hashable)
+import qualified Data.Set as St
+import Data.Maybe
 
 -- A primitive operation is an operation of arbitrary arity with all arguments and result in d
-data Prim d = Prim Int ([d] -> d)
+data Prim d = Prim String Int ([d] -> d)
+instance Show (Prim d) where
+  show (Prim id _ _) = id
 
 -- An expression is an AST describing how register values and the current value are combined via primitive operations
 data Expression d where
   PrimOp :: Prim d -> [Expression d] -> Expression d
   RegRead :: Int -> Expression d
   CurVal :: Expression d
+  deriving (Show)
 
 -- An update operation is a map between each register (by register id) and an expression to be used as the updated value of that register
 -- Note that all update operations must supply an expression for all registers (even if the expression is just the identity function)
 type UpdateOp d = M.HashMap Int (Expression d)
+showUpdate u = u & M.toList & fmap (\(r, e) -> "      " ++ show r ++ " <- " ++ show e) & L.intercalate "\n"
 
 -- Transition and transition map describe transitions and map between state, symbol pairs and the corresponding transition
 data Transition s d = Transition Int s (UpdateOp d) Int
+instance (Show s, Show d) => Show (Transition s d) where
+  show (Transition q s u t) = 
+    show (q,s) ++ " -> " ++ show t ++ " with \n" ++ showUpdate u
+
 type TransitionMap s d = M.HashMap (Int, s) [Transition s d]
 
 -- Mapping between initial states (by state id) and operations to produce initial register assignments for those states
@@ -41,8 +52,17 @@ type RegAssign d = M.HashMap Int d
 type State d = M.HashMap Int [RegAssign d]
 
 -- CRA num_states num_registers transitions initialization_func finalization_func
-data (Hashable s, Eq s) => CRA s d = CRA Int Int (TransitionMap s d) (InitFunc d) (FinalFunc d)
-
+data (Hashable s, Eq s) =>
+     CRA s d = CRA Int Int (TransitionMap s d) (InitFunc d) (FinalFunc d)
+instance (Hashable s, Eq s, Show s, Show d) => Show (CRA s d) where
+  show (CRA numStates numRegs transitions initial final) =
+    "CRA states: " ++ show numStates ++ " registers: " ++ show numRegs ++ "\n" ++
+    "  transitions: \n" ++ showTrans transitions ++
+    "  initial: \n" ++ showInit initial ++
+    "  final: \n" ++ showFin final
+    where showTrans t = t & M.toList & concatMap snd & fmap (\t -> "    " ++ show t ++ "\n") & concatMap id
+          showInit i = i & M.toList & fmap (\(q, u) -> "    " ++ show q ++ ":\n" ++ showUpdate u ++ "\n") & concatMap id
+          showFin i = i & M.toList & fmap (\(q, u) -> "    " ++ show q ++ ": " ++ show u) & L.intercalate "\n"
 --
 -- Helper functions
 --
@@ -58,7 +78,7 @@ evalExpression ra _ (RegRead r) =
   case M.lookup r ra of
     Just v -> v
     Nothing -> error $ "Expression trying to read invalid register id: " ++ (show r)
-evalExpression ra cur (PrimOp (Prim arity op) children)
+evalExpression ra cur (PrimOp (Prim _ arity op) children)
   | arity /= length children = error $ "Expression has operation applied to wrong number of arguments: " ++ (show arity) ++ " /= " ++ (show $ length children)
   | otherwise =
       let results = fmap (evalExpression ra cur) children
@@ -73,6 +93,7 @@ evalUpdateOp ra cur u = M.mapWithKey doUpdate u
 -- Main CRA interface
 --
 
+-- Produces the initial state of the given CRA
 initial :: (Hashable s, Eq s) =>
      CRA s d
   -> State d
@@ -80,6 +101,8 @@ initial (CRA _ _ _ initFunc _) =
   M.map getInitRegAssign initFunc
   where getInitRegAssign u = [evalUpdateOp emptyRegAssign (error $ "Init expr has cur!") u]
 
+-- Performs a transition for the given CRA, state, and tagged data word.
+-- Produces an updated state and any results produced by the transition.
 transition :: (Hashable s, Eq s) =>
      CRA s d
   -> State d
@@ -108,6 +131,7 @@ transition (CRA _ _ transMap _ finalFunc) state (sym, cur) =
                   where f Nothing = Just [ra]
                         f (Just prev) = Just (ra:prev)
 
+-- Runs the given CRA from its initial state over a list of tagged data words.
 runList :: (Hashable s, Eq s) =>
      CRA s d
   -> [(s, d)]
@@ -125,16 +149,16 @@ runList a l =
 --
 
 primConst :: d -> Prim d
-primConst x = Prim 0 (\[] -> x)
+primConst x = Prim "const" 0 (\[] -> x)
 
 primId :: Prim d
-primId = Prim 1 (\[x] -> x)
+primId = Prim "id" 1 (\[x] -> x)
 
 primUnary :: (d -> d) -> Prim d
-primUnary f = Prim 1 (\[x] -> f x)
+primUnary f = Prim "unary" 1 (\[x] -> f x)
 
 primBinary :: (d -> d -> d) -> Prim d
-primBinary f = Prim 2 (\[x, y] -> f x y)
+primBinary f = Prim "binary" 2 (\[x, y] -> f x y)
 
 exprConst :: d -> Expression d
 exprConst x = PrimOp (primConst x) []
@@ -169,16 +193,153 @@ buildFinalFunc ::
   -> FinalFunc d
 buildFinalFunc = M.fromList
 
-buildCRA :: (Hashable s, Eq s) =>
+
+buildTransitionMap :: (Hashable s, Eq s, Ord s) =>
      [Transition s d]
-  -> InitFunc d
-  -> FinalFunc d
-  -> CRA s d
-buildCRA trans init final =
+  -> TransitionMap s d
+buildTransitionMap trans =
   let keyTrans t@(Transition q s _ _) = ((q, s), t)
-      transMap = trans & fmap keyTrans & foldl addToMap M.empty
-  in CRA 0 0 transMap init final
+  in trans & fmap keyTrans & foldl addToMap M.empty
   where addToMap m (k, t) = M.alter f k m
           where f Nothing = Just [t]
                 f (Just prev) = Just (t:prev)
+
+buildCRA :: (Hashable s, Eq s, Ord s) =>
+     Int
+  -> Int
+  -> [Transition s d]
+  -> InitFunc d
+  -> FinalFunc d
+  -> CRA s d
+buildCRA numStates numRegs trans init final =
+  CRA numStates numRegs (buildTransitionMap trans) init final
+
+
+--
+-- Primitive operations for combinators
+--
+
+-- Need: product of states, union of registers (for `op`), other things?
+-- In particular: combine two CRAs such that we get product of state spaces and union of registers
+-- but also produce some way of tracking which of the new states/registers was associated with which of the original CRAs
+
+-- Idea 1: do a pre-combine which remaps all state and register indices (for transitions as well as for init/final functions)
+--  then combining the (independent) CRAs is straightforward
+
+-- Idea 2: all register and state id's are drawn from the same increasing sequence and hence are unique from the beginning.
+--  still have the issue of how to get product of states....
+
+-- Idea 3: use arbitry types for register and state ids...can then just use tuples / per-CRA labels to disambiguate...
+
+-- Idea 4 (current impl below): single combine function to produce the core combined CRA also returns maps from ids used in inputs to ids used in output.
+
+type IdMap = M.HashMap Int [Int]
+
+idMapFromList :: [(Int, [Int])] -> IdMap
+idMapFromList = M.fromList
+
+updateUpdateOp :: IdMap -> UpdateOp d -> UpdateOp d
+updateUpdateOp regMap u =
+  u & M.toList & fmap doUpdate & M.fromList
+  where doUpdate (r, exp) =
+          let r' = M.lookup r regMap & fromJust & head
+              exp' = updateExp exp
+          in (r', exp')
+  
+        updateExp (PrimOp op children) = PrimOp op (fmap updateExp children)
+        updateExp (RegRead r) = RegRead (M.lookup r regMap & fromJust & head)
+        updateExp CurVal = CurVal
+
+--
+-- Assumptions:
+-- - states and registers are numbered consecutively starting with 1 (e.g., 1, 2, 3, 4)
+--
+-- Output: (combinedCRA, (leftStateMap, leftRegisterMap), (rightStateMap, rightRegisterMap))
+-- 
+-- Note that the final function of the combinedCRA is left empty assuming the caller wants
+-- to construct their own final function.
+--
+combine :: (Hashable s, Eq s, Ord s) =>
+     CRA s d
+  -> CRA s d
+  -> (CRA s d, (IdMap, IdMap), (IdMap, IdMap))
+combine (CRA numStatesL numRegsL transitionsL initL finalL) (CRA numStatesR numRegsR transitionsR initR finalR) =
+
+  let numStates = numStatesL * numStatesR
+      stateMapL = [(i, [1..numStatesR] & fmap (+ ((i - 1) * numStatesR))) | i <- [1..numStatesL]] & idMapFromList
+      stateMapR = [(i, [0..(numStatesL-1)] & fmap (* numStatesR) & fmap (+ i)) | i <- [1..numStatesR]] & idMapFromList
+
+      numRegs = numRegsL + numRegsR
+      regMapL = [(i, [i]) | i <- [1..numRegsL]] & idMapFromList
+      regMapR = [(i, [i + numRegsL]) | i <- [1..numRegsR]] & idMapFromList
+
+      tranSyms = (M.keys transitionsL ++ M.keys transitionsR) & fmap snd & St.fromList
+
+      --
+      -- Combine left and right transitions
+      -- The resulting transition will simulate both transitions occuring
+      -- simultaneously in the combined state and register spaces
+      --
+      combineTransitions (Transition qL sL updateL tL) (Transition qR sR updateR tR) =
+        let s = if sL == sR then sL else (error $ "Something went wrong: trying to combine transitions for diff. symbols")
+            q' = (stateMapL M.! qL) `L.intersect` (stateMapR M.! qR)
+            update' = (updateUpdateOp regMapL updateL) `M.union` (updateUpdateOp regMapR updateR)
+
+            t' = (stateMapL M.! tL) `L.intersect` (stateMapR M.! tR)
+        in (q' `zip` t') & fmap (\(q', t') -> Transition q' s update' t')
+
+      --
+      -- Updates the state and register ids of the given transition
+      -- according to {stateMap, regMap}Us, but limited to only the states given by stateMapThem and theirState
+      --
+      updateTransStatesRegs stateMapUs regMapUs stateMapThem theirState (Transition q s update t) =
+        let theirState' = stateMapThem M.! theirState
+            q' = (stateMapUs M.! q ) & L.intersect theirState'
+            update' = updateUpdateOp regMapUs update
+            t' = (stateMapUs M.! t) & L.intersect theirState'
+        in (q' `zip` t') & fmap (\(q', t') -> Transition q' s update' t')
+
+      --
+      -- Produces a list of transitions in the combined state, register space for the given
+      -- symbol, left state id, and right state id
+      --
+      oneTransition (s, (l, r)) =
+        case (M.lookup (l, s) transitionsL, M.lookup (r, s) transitionsR) of
+          (Just lTrans, Just rTrans) -> [combineTransitions lt rt | lt <- lTrans, rt <- rTrans] & concatMap id
+          (Just lTrans, Nothing) -> concatMap (updateTransStatesRegs stateMapL regMapL stateMapR r) lTrans
+          (Nothing, Just rTrans) -> concatMap (updateTransStatesRegs stateMapR regMapR stateMapL l) rTrans
+          _ -> []
+
+      transitions =
+        [(s, (l, r)) | s <- St.toList tranSyms, l <- [1..numStatesL], r <- [1..numStatesR]]
+        & concatMap oneTransition
+        & buildTransitionMap
+
+      
+      init = ((M.toList initL & concatMap (updateKey stateMapL regMapL))
+           ++ (M.toList initR & concatMap (updateKey stateMapR regMapR)))
+           & M.fromListWith M.union
+        where updateKey stateMap regMap (q, u) = [(q', updateUpdateOp regMap u) | q' <- stateMap M.! q]
+
+      final = M.empty
+
+  in (CRA numStates numRegs transitions init final, (stateMapL, regMapL), (stateMapR, regMapR))
+
+-- first come up with id maps...
+-- then create new CRA applying them...
+
+{-
+
+Look at adding transitions on a per-transition-symbol basis:
+
+For each transition symbol s,
+  For each combined start state (L, R),
+    If L and R both transitions on s, add transitions (L, R) -> [(L', R') | L' <- all trans from L, R' <- all trans from R]
+    else if L transitions on s, add (L, R) -> [(L', R) | L' <- all trans from L]
+    else if R transitions on s, add (L, R) -> [(L, R') | R' <- all trans from R]
+
+
+... have to make sure (prove) that this correctly simulates both L and R on any given sequence of input symbols...
+in other words, the projection back to L or R should be in the same state for any given input sequence...
+-}
 
