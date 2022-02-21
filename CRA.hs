@@ -251,6 +251,10 @@ updateUpdateOp regMap u =
         updateExp CurVal = CurVal
 
 --
+-- Produces a CRA that combines two input CRAs by executing
+-- transitions of both input CRAs over the same input on a shared
+-- state and register space.
+--
 -- Assumptions:
 -- - states and registers are numbered consecutively starting with 1 (e.g., 1, 2, 3, 4)
 --

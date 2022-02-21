@@ -44,13 +44,21 @@ atom yesSym noSym dat =
 
 -- Run two CRAs in parallel and combine the outputs (when defined) using the given function
 op :: Prim d -> CRA s d -> CRA s d -> CRA s d
-op = undefined
+op combOp l@(CRA _ _ _ initL finalL) r@(CRA _ _ _ initR finalR) =
+  let (comb, (stateMapL, regMapL), (stateMapR, regMapR)) = combine l r
+      initF =
+        -- initial states are those states in combined space where both l and r are in init states
+        -- need to merge l and r update operations for each of these initial states.
+      finalF =
+        -- final states are those states in combined space where both l and r are in final states
+        -- need to create custom expression that combines l and r expressions for each final states using combOp
 {-
 State space: product of state spaces of both inputs
 Registers: union of registers of both inputs
 Initial function: union of initial functions of both inputs.
 Final function: intersection of inputs final function, the apply op.
 -}
+
 
 -- Produce result of which ever CRA currently matches
 ifelse :: CRA s d -> CRA s d -> CRA s d
