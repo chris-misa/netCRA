@@ -5,6 +5,8 @@
 module QRE where
 
 import Data.Hashable (Hashable)
+import Data.HashMap.Strict as M -- from unordered-containers
+import Data.Function ((&))
 
 import CRA
 
@@ -28,12 +30,15 @@ key-based stuff: splitting into substeams based on a key-generating function, th
 -}
 
 
+--
 -- Match a single symbol and emit a constant value when the symbol matches
-atom :: (Hashable s, Eq s, Ord s) => s -> s -> d -> CRA s d
-atom yesSym noSym dat =
+-- Note that `expr` should not have any register reads (enforce this later...)
+--
+atom :: (Hashable s, Eq s, Ord s) => s -> s -> Expression d -> CRA s d
+atom yesSym noSym expr =
   let noop = buildUpdateOp []
       initF = buildInitFunc [(1, noop)]
-      finalF = buildFinalFunc [(2, exprConst dat)]
+      finalF = buildFinalFunc [(2, expr)]
       transitions = [
           Transition 1 yesSym noop 2,
           Transition 1 noSym noop 1,
@@ -42,35 +47,50 @@ atom yesSym noSym dat =
         ]
   in buildCRA 2 0 transitions initF finalF
 
+
+--
 -- Run two CRAs in parallel and combine the outputs (when defined) using the given function
-op :: Prim d -> CRA s d -> CRA s d -> CRA s d
+--
+op :: (Hashable s, Eq s, Ord s) => Prim d -> CRA s d -> CRA s d -> CRA s d
 op combOp l@(CRA _ _ _ initL finalL) r@(CRA _ _ _ initR finalR) =
-  let (comb, (stateMapL, regMapL), (stateMapR, regMapR)) = combine l r
-      initF =
-        -- initial states are those states in combined space where both l and r are in init states
-        -- need to merge l and r update operations for each of these initial states.
+
+  let (CRA numStates numRegs transitions _ _, (stateMapL, regMapL), (stateMapR, regMapR)) = combine l r
+
+      -- States of init are the intersection of init state from left and right
+      -- The update op at each state is the union of updates from left and right (should assign to disjoint registers)
+      initF = M.intersectionWith M.union (translateInit stateMapL regMapL initL) (translateInit stateMapR regMapR initR)
+
+      -- States of final are the intersection of final states from left and right
+      -- The expresion at each state combines left and right expressions using combOp
+      finalF = M.intersectionWith combExprs (translateFinal stateMapL regMapL finalL) (translateFinal stateMapR regMapR finalR)
+        where combExprs e1 e2 = PrimOp combOp [e1, e2]
+
+  in CRA numStates numRegs transitions initF finalF
+
+--
+-- Produce result of whichever CRA currently matches
+--
+ifelse :: (Hashable s, Eq s, Ord s) => CRA s d -> CRA s d -> CRA s d
+ifelse l@(CRA _ _ _ initL finalL) r@(CRA _ _ _ initR finalR) =
+
+  let (CRA numStates numRegs transitions _ _, (stateMapL, regMapL), (stateMapR, regMapR)) = combine l r
+
+      -- States of init are the intersection of init state from left and right
+      -- The update op at each state is the union of updates from left and right (should assign to disjoint registers)
+      initF = M.intersectionWith M.union (translateInit stateMapL regMapL initL) (translateInit stateMapR regMapR initR)
+
+      -- States of final are the symmetric difference of final states from left and right
+      -- The expresion at each state is unchanged (modulo translating registers)
       finalF =
-        -- final states are those states in combined space where both l and r are in final states
-        -- need to create custom expression that combines l and r expressions for each final states using combOp
-{-
-State space: product of state spaces of both inputs
-Registers: union of registers of both inputs
-Initial function: union of initial functions of both inputs.
-Final function: intersection of inputs final function, the apply op.
--}
+        let newL = translateFinal stateMapL regMapL finalL
+            newR = translateFinal stateMapR regMapR finalR
+        in (newL `M.union` newR) `M.difference` (newL `M.intersection` newR)
 
+  in CRA numStates numRegs transitions initF finalF
 
--- Produce result of which ever CRA currently matches
-ifelse :: CRA s d -> CRA s d -> CRA s d
-ifelse = undefined
-{-
-State space: product of state spaces of both inputs
-Registers: union of registers of both inputs
-Initial function: union of initial functions of both inputs.
-Final function: symmetric difference of both final functions.
--}
-
+--
 -- Quantitative concatenation (note the primitive operation must be binary)
+--
 split :: CRA s d -> CRA s d -> Prim d -> CRA s d
 split = undefined
 {-
@@ -81,7 +101,9 @@ Final function: final function of second input
 Add transition between final function of first input and initial function of second input
 -}
 
+--
 -- Quantitative iteration (note the primitive operation must be binary)
+--
 iter :: CRA s d -> d -> Prim d -> CRA s d
 iter = undefined
 {-

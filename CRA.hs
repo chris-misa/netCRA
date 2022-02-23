@@ -52,9 +52,9 @@ type RegAssign d = M.HashMap Int d
 type State d = M.HashMap Int [RegAssign d]
 
 -- CRA num_states num_registers transitions initialization_func finalization_func
-data (Hashable s, Eq s) =>
+data (Hashable s, Eq s, Ord s) =>
      CRA s d = CRA Int Int (TransitionMap s d) (InitFunc d) (FinalFunc d)
-instance (Hashable s, Eq s, Show s, Show d) => Show (CRA s d) where
+instance (Hashable s, Eq s, Ord s, Show s, Show d) => Show (CRA s d) where
   show (CRA numStates numRegs transitions initial final) =
     "CRA states: " ++ show numStates ++ " registers: " ++ show numRegs ++ "\n" ++
     "  transitions: \n" ++ showTrans transitions ++
@@ -94,7 +94,7 @@ evalUpdateOp ra cur u = M.mapWithKey doUpdate u
 --
 
 -- Produces the initial state of the given CRA
-initial :: (Hashable s, Eq s) =>
+initial :: (Hashable s, Eq s, Ord s) =>
      CRA s d
   -> State d
 initial (CRA _ _ _ initFunc _) =
@@ -103,7 +103,7 @@ initial (CRA _ _ _ initFunc _) =
 
 -- Performs a transition for the given CRA, state, and tagged data word.
 -- Produces an updated state and any results produced by the transition.
-transition :: (Hashable s, Eq s) =>
+transition :: (Hashable s, Eq s, Ord s) =>
      CRA s d
   -> State d
   -> (s, d)
@@ -132,7 +132,7 @@ transition (CRA _ _ transMap _ finalFunc) state (sym, cur) =
                         f (Just prev) = Just (ra:prev)
 
 -- Runs the given CRA from its initial state over a list of tagged data words.
-runList :: (Hashable s, Eq s) =>
+runList :: (Hashable s, Eq s, Ord s) =>
      CRA s d
   -> [(s, d)]
   -> [d]
@@ -238,17 +238,31 @@ type IdMap = M.HashMap Int [Int]
 idMapFromList :: [(Int, [Int])] -> IdMap
 idMapFromList = M.fromList
 
-updateUpdateOp :: IdMap -> UpdateOp d -> UpdateOp d
-updateUpdateOp regMap u =
+-- Translate all register id references in the given expression according to the given register id map
+translateExpr :: IdMap -> Expression d -> Expression d
+translateExpr regMap (PrimOp op children) = PrimOp op (fmap (translateExpr regMap) children)
+translateExpr regMap (RegRead r) = RegRead (M.lookup r regMap & fromJust & head)
+translateExpr regMap CurVal = CurVal
+
+-- Translate all register ids in the given update operation according to the given register id map
+translateUpdateOp :: IdMap -> UpdateOp d -> UpdateOp d
+translateUpdateOp regMap u =
   u & M.toList & fmap doUpdate & M.fromList
   where doUpdate (r, exp) =
           let r' = M.lookup r regMap & fromJust & head
-              exp' = updateExp exp
+              exp' = translateExpr regMap exp
           in (r', exp')
-  
-        updateExp (PrimOp op children) = PrimOp op (fmap updateExp children)
-        updateExp (RegRead r) = RegRead (M.lookup r regMap & fromJust & head)
-        updateExp CurVal = CurVal
+
+-- Translate both register and state ids in the init function according to the given maps
+translateInit :: IdMap -> IdMap -> InitFunc d -> InitFunc d
+translateInit stateMap regMap init = 
+  init & M.toList & concatMap doUpdate & M.fromList
+  where doUpdate (q, u) = [(q', translateUpdateOp regMap u) | q' <- stateMap M.! q]
+
+translateFinal :: IdMap -> IdMap -> FinalFunc d -> FinalFunc d
+translateFinal stateMap regMap final =
+  final & M.toList & concatMap doUpdate & M.fromList
+  where doUpdate (q, e) = [(q', translateExpr regMap e) | q' <- stateMap M.! q]
 
 --
 -- Produces a CRA that combines two input CRAs by executing
@@ -287,7 +301,7 @@ combine (CRA numStatesL numRegsL transitionsL initL finalL) (CRA numStatesR numR
       combineTransitions (Transition qL sL updateL tL) (Transition qR sR updateR tR) =
         let s = if sL == sR then sL else (error $ "Something went wrong: trying to combine transitions for diff. symbols")
             q' = (stateMapL M.! qL) `L.intersect` (stateMapR M.! qR)
-            update' = (updateUpdateOp regMapL updateL) `M.union` (updateUpdateOp regMapR updateR)
+            update' = (translateUpdateOp regMapL updateL) `M.union` (translateUpdateOp regMapR updateR)
 
             t' = (stateMapL M.! tL) `L.intersect` (stateMapR M.! tR)
         in (q' `zip` t') & fmap (\(q', t') -> Transition q' s update' t')
@@ -299,7 +313,7 @@ combine (CRA numStatesL numRegsL transitionsL initL finalL) (CRA numStatesR numR
       updateTransStatesRegs stateMapUs regMapUs stateMapThem theirState (Transition q s update t) =
         let theirState' = stateMapThem M.! theirState
             q' = (stateMapUs M.! q ) & L.intersect theirState'
-            update' = updateUpdateOp regMapUs update
+            update' = translateUpdateOp regMapUs update
             t' = (stateMapUs M.! t) & L.intersect theirState'
         in (q' `zip` t') & fmap (\(q', t') -> Transition q' s update' t')
 
