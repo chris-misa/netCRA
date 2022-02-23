@@ -51,8 +51,8 @@ atom yesSym noSym expr =
 --
 -- Run two CRAs in parallel and combine the outputs (when defined) using the given function
 --
-op :: (Hashable s, Eq s, Ord s) => Prim d -> CRA s d -> CRA s d -> CRA s d
-op combOp l@(CRA _ _ _ initL finalL) r@(CRA _ _ _ initR finalR) =
+op :: (Hashable s, Eq s, Ord s) => CRA s d -> CRA s d -> Prim d -> CRA s d
+op l@(CRA _ _ _ initL finalL) r@(CRA _ _ _ initR finalR) combOp =
 
   let (CRA numStates numRegs transitions _ _, (stateMapL, regMapL), (stateMapR, regMapR)) = combine l r
 
@@ -92,14 +92,37 @@ ifelse l@(CRA _ _ _ initL finalL) r@(CRA _ _ _ initR finalR) =
 -- Quantitative concatenation (note the primitive operation must be binary)
 --
 split :: CRA s d -> CRA s d -> Prim d -> CRA s d
-split = undefined
+split l@(CRA _ _ _ initL finalL) r@(CRA _ _ _ initR finalR) combOp =
+
+  let (CRA numStates numRegs transitions _ _, (stateMapL, regMapL), (stateMapR, regMapR)) = combine l r
+
+      -- Just translate left init function
+      initF = translateInit stateMapL regMapL initL
+
+      auxReg = numRegs + 1
+      internalTrans = [makeInternalTrans from to | from <- M.toList finalL, to <- M.toList initR]
+        where makeInternalTrans (q, exp) (t, op) =
+                let op' = op & M.insert auxReg exp
+                in EpsilonTransition q op' t
+
+      transitions' = buildTransitionMap $ internalTrans ++ M.toList transitions
+
+      -- Translate right final and add combOp looking up the previous result of left final
+      finalF = translateFinal stateMapR regMapR finalR & M.map addCombOp
+        where addCombOp e = PrimOp combOp [RegRead auxReg, e]
+
+  in CRA numStates (numRegs + 1) transitions'  initF finalF
+
+-------------------------------------
 {-
-State space: product of state spaces of both inputs
-Registers: union of inputs
-Initial function: initial function of first input
-Final function: final function of second input
-Add transition between final function of first input and initial function of second input
+As with non-determinism, adding epsilon transitions requires a non-trivial pass on the CRA code (currently incomplete)
+Not that it's hard, just that it requries (non-trivial) changes in a number of places...
+
+Seems like the best approach is to have separate epsilon transition map in the CRA data structure (keyed just by start state id).
+
+May should also should make CRAs named records since we might need to continue tacking things on?
 -}
+-------------------------------------
 
 --
 -- Quantitative iteration (note the primitive operation must be binary)

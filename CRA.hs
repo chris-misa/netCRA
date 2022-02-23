@@ -32,11 +32,17 @@ showUpdate u = u & M.toList & fmap (\(r, e) -> "      " ++ show r ++ " <- " ++ s
 
 -- Transition and transition map describe transitions and map between state, symbol pairs and the corresponding transition
 data Transition s d = Transition Int s (UpdateOp d) Int
+                    | EpsilonTransition Int (UpdateOp d) Int
 instance (Show s, Show d) => Show (Transition s d) where
   show (Transition q s u t) = 
     show q ++ " -> " ++ show t ++ " on " ++ show s ++ " with \n" ++ showUpdate u
+  show (EpsilonTransition q u t) = 
+    show q ++ " -> " ++ show t ++ " on <epsilon> with \n" ++ showUpdate u
 
 type TransitionMap s d = M.HashMap (Int, s) [Transition s d]
+
+-- TODO: continue epsilon transition pass from around here...
+type EpsilonTransitionMap s d = M.HashMap Int [Transition s d] -- Epsilon transitions need to be keyed by start state...
 
 -- Mapping between initial states (by state id) and operations to produce initial register assignments for those states
 type InitFunc d = M.HashMap Int (UpdateOp d)
@@ -54,6 +60,7 @@ type State d = M.HashMap Int [RegAssign d]
 -- CRA num_states num_registers transitions initialization_func finalization_func
 data (Hashable s, Eq s, Ord s) =>
      CRA s d = CRA Int Int (TransitionMap s d) (InitFunc d) (FinalFunc d)
+
 instance (Hashable s, Eq s, Ord s, Show s, Show d) => Show (CRA s d) where
   show (CRA numStates numRegs transitions initial final) =
     "CRA states: " ++ show numStates ++ " registers: " ++ show numRegs ++ "\n" ++
@@ -63,6 +70,7 @@ instance (Hashable s, Eq s, Ord s, Show s, Show d) => Show (CRA s d) where
     where showTrans t = t & M.toList & concatMap snd & fmap (\t -> "    " ++ show t ++ "\n") & concatMap id
           showInit i = i & M.toList & fmap (\(q, u) -> "    " ++ show q ++ ":\n" ++ showUpdate u ++ "\n") & concatMap id
           showFin i = i & M.toList & fmap (\(q, u) -> "    " ++ show q ++ ": " ++ show u) & L.intercalate "\n"
+
 --
 -- Helper functions
 --
