@@ -45,16 +45,16 @@ atom yesSym noSym expr =
           Transition 2 yesSym noop 2,
           Transition 2 noSym noop 1
         ]
-  in buildCRA 2 0 transitions initF finalF
+  in buildCRA 2 0 transitions [] initF finalF
 
 
 --
 -- Run two CRAs in parallel and combine the outputs (when defined) using the given function
 --
 op :: (Hashable s, Eq s, Ord s) => CRA s d -> CRA s d -> Prim d -> CRA s d
-op l@(CRA _ _ _ initL finalL) r@(CRA _ _ _ initR finalR) combOp =
+op l@(CRA _ _ _ _ initL finalL) r@(CRA _ _ _ _ initR finalR) combOp =
 
-  let (CRA numStates numRegs transitions _ _, (stateMapL, regMapL), (stateMapR, regMapR)) = combine l r
+  let (CRA numStates numRegs transitions eTransitions _ _, (stateMapL, regMapL), (stateMapR, regMapR)) = combine l r
 
       -- States of init are the intersection of init state from left and right
       -- The update op at each state is the union of updates from left and right (should assign to disjoint registers)
@@ -65,15 +65,15 @@ op l@(CRA _ _ _ initL finalL) r@(CRA _ _ _ initR finalR) combOp =
       finalF = M.intersectionWith combExprs (translateFinal stateMapL regMapL finalL) (translateFinal stateMapR regMapR finalR)
         where combExprs e1 e2 = PrimOp combOp [e1, e2]
 
-  in CRA numStates numRegs transitions initF finalF
+  in CRA numStates numRegs transitions eTransitions initF finalF
 
 --
 -- Produce result of whichever CRA currently matches
 --
 ifelse :: (Hashable s, Eq s, Ord s) => CRA s d -> CRA s d -> CRA s d
-ifelse l@(CRA _ _ _ initL finalL) r@(CRA _ _ _ initR finalR) =
+ifelse l@(CRA _ _ _ _ initL finalL) r@(CRA _ _ _ _ initR finalR) =
 
-  let (CRA numStates numRegs transitions _ _, (stateMapL, regMapL), (stateMapR, regMapR)) = combine l r
+  let (CRA numStates numRegs transitions eTransitions _ _, (stateMapL, regMapL), (stateMapR, regMapR)) = combine l r
 
       -- States of init are the intersection of init state from left and right
       -- The update op at each state is the union of updates from left and right (should assign to disjoint registers)
@@ -86,32 +86,30 @@ ifelse l@(CRA _ _ _ initL finalL) r@(CRA _ _ _ initR finalR) =
             newR = translateFinal stateMapR regMapR finalR
         in (newL `M.union` newR) `M.difference` (newL `M.intersection` newR)
 
-  in CRA numStates numRegs transitions initF finalF
+  in CRA numStates numRegs transitions eTransitions initF finalF
 
 --
 -- Quantitative concatenation (note the primitive operation must be binary)
 --
-split :: CRA s d -> CRA s d -> Prim d -> CRA s d
-split l@(CRA _ _ _ initL finalL) r@(CRA _ _ _ initR finalR) combOp =
+split :: (Hashable s, Eq s, Ord s) => CRA s d -> CRA s d -> Prim d -> CRA s d
+split l@(CRA _ _ _ _ initL finalL) r@(CRA _ _ _ _ initR finalR) combOp =
 
-  let (CRA numStates numRegs transitions _ _, (stateMapL, regMapL), (stateMapR, regMapR)) = combine l r
+  let (CRA numStates numRegs transitions eTransitions _ _, (stateMapL, regMapL), (stateMapR, regMapR)) = combine l r
 
       -- Just translate left init function
       initF = translateInit stateMapL regMapL initL
 
       auxReg = numRegs + 1
-      internalTrans = [makeInternalTrans from to | from <- M.toList finalL, to <- M.toList initR]
-        where makeInternalTrans (q, exp) (t, op) =
-                let op' = op & M.insert auxReg exp
-                in EpsilonTransition q op' t
-
-      transitions' = buildTransitionMap $ internalTrans ++ M.toList transitions
+      -- internalTrans = [makeInternalTrans from to | from <- M.toList finalL, to <- M.toList initR]
+      --   where makeInternalTrans (q, exp) (t, op) =
+      --           let op' = op & M.insert auxReg exp
+      --           in EpsilonTransition q op' t
 
       -- Translate right final and add combOp looking up the previous result of left final
       finalF = translateFinal stateMapR regMapR finalR & M.map addCombOp
         where addCombOp e = PrimOp combOp [RegRead auxReg, e]
 
-  in CRA numStates (numRegs + 1) transitions'  initF finalF
+  in CRA numStates (numRegs + 1) transitions eTransitions initF finalF
 
 -------------------------------------
 {-

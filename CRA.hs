@@ -32,17 +32,19 @@ showUpdate u = u & M.toList & fmap (\(r, e) -> "      " ++ show r ++ " <- " ++ s
 
 -- Transition and transition map describe transitions and map between state, symbol pairs and the corresponding transition
 data Transition s d = Transition Int s (UpdateOp d) Int
-                    | EpsilonTransition Int (UpdateOp d) Int
 instance (Show s, Show d) => Show (Transition s d) where
   show (Transition q s u t) = 
     show q ++ " -> " ++ show t ++ " on " ++ show s ++ " with \n" ++ showUpdate u
-  show (EpsilonTransition q u t) = 
-    show q ++ " -> " ++ show t ++ " on <epsilon> with \n" ++ showUpdate u
 
 type TransitionMap s d = M.HashMap (Int, s) [Transition s d]
 
--- TODO: continue epsilon transition pass from around here...
-type EpsilonTransitionMap s d = M.HashMap Int [Transition s d] -- Epsilon transitions need to be keyed by start state...
+-- ETransition and ETransitionMap describe epsilon transitions.
+data ETransition d = ETransition Int (UpdateOp d) Int
+instance (Show d) => Show (ETransition d) where
+  show (ETransition q u t) = 
+    show q ++ " -> " ++ show t ++ " on <epsilon> with \n" ++ showUpdate u
+
+type ETransitionMap d = M.HashMap Int [ETransition d]
 
 -- Mapping between initial states (by state id) and operations to produce initial register assignments for those states
 type InitFunc d = M.HashMap Int (UpdateOp d)
@@ -59,15 +61,17 @@ type State d = M.HashMap Int [RegAssign d]
 
 -- CRA num_states num_registers transitions initialization_func finalization_func
 data (Hashable s, Eq s, Ord s) =>
-     CRA s d = CRA Int Int (TransitionMap s d) (InitFunc d) (FinalFunc d)
+     CRA s d = CRA Int Int (TransitionMap s d) (ETransitionMap d) (InitFunc d) (FinalFunc d)
 
 instance (Hashable s, Eq s, Ord s, Show s, Show d) => Show (CRA s d) where
-  show (CRA numStates numRegs transitions initial final) =
+  show (CRA numStates numRegs transitions etransitions initial final) =
     "CRA states: " ++ show numStates ++ " registers: " ++ show numRegs ++ "\n" ++
     "  transitions: \n" ++ showTrans transitions ++
+    "  epsilon transitions: \n" ++ showETrans etransitions ++
     "  initial: \n" ++ showInit initial ++
     "  final: \n" ++ showFin final
     where showTrans t = t & M.toList & concatMap snd & fmap (\t -> "    " ++ show t ++ "\n") & concatMap id
+          showETrans t = t & M.toList & concatMap snd & fmap (\t -> "    " ++ show t ++ "\n") & concatMap id
           showInit i = i & M.toList & fmap (\(q, u) -> "    " ++ show q ++ ":\n" ++ showUpdate u ++ "\n") & concatMap id
           showFin i = i & M.toList & fmap (\(q, u) -> "    " ++ show q ++ ": " ++ show u) & L.intercalate "\n"
 
@@ -105,7 +109,7 @@ evalUpdateOp ra cur u = M.mapWithKey doUpdate u
 initial :: (Hashable s, Eq s, Ord s) =>
      CRA s d
   -> State d
-initial (CRA _ _ _ initFunc _) =
+initial (CRA _ _ _ _ initFunc _) =
   M.map getInitRegAssign initFunc
   where getInitRegAssign u = [evalUpdateOp emptyRegAssign (error $ "Init expr has cur!") u]
 
@@ -116,8 +120,8 @@ transition :: (Hashable s, Eq s, Ord s) =>
   -> State d
   -> (s, d)
   -> (State d, [d])
-transition (CRA _ _ transMap _ finalFunc) state (sym, cur) =
-  let state' = state & M.toList & concatMap doTransition & buildState
+transition (CRA _ _ transMap eTransMap _ finalFunc) state (sym, cur) =
+  let state' = state & M.toList & concatMap doTransition & concatMap doETransition & buildState
       res = state' & M.toList & concatMap doFinal
   in (state', res)
 
@@ -127,6 +131,17 @@ transition (CRA _ _ transMap _ finalFunc) state (sym, cur) =
               let tsras = [(t, ra) | t <- ts, ra <- ras]
               in fmap (\(Transition _ _ u q', ra) -> (q', evalUpdateOp ra cur u)) tsras
             Nothing -> []
+
+        doETransition (q, ra) = 
+          doETransRec [(q, ra)] []
+          where doETransRec ((q, ra):ras) res =
+                  case M.lookup q eTransMap of
+                    Just ts ->
+                      let cur = error "Found reference to `CurVal` in an epsilon transition"
+                          followOne (ETransition _ u q') = (q', evalUpdateOp ra cur u)
+                      in doETransRec ((fmap followOne ts) ++ ras) res
+                    Nothing -> doETransRec ras ((q, ra):res)
+                doETransRec [] res = res
 
         doFinal (q, ras) =
           case M.lookup q finalFunc of
@@ -212,15 +227,26 @@ buildTransitionMap trans =
           where f Nothing = Just [t]
                 f (Just prev) = Just (t:prev)
 
+buildETransitionMap ::
+     [ETransition d]
+  -> ETransitionMap d
+buildETransitionMap trans =
+  let keyTrans t@(ETransition q _ _) = (q, t)
+  in trans & fmap keyTrans & foldl addToMap M.empty
+  where addToMap m (k, t) = M.alter f k m
+          where f Nothing = Just [t]
+                f (Just prev) = Just (t:prev)
+
 buildCRA :: (Hashable s, Eq s, Ord s) =>
      Int
   -> Int
   -> [Transition s d]
+  -> [ETransition d]
   -> InitFunc d
   -> FinalFunc d
   -> CRA s d
-buildCRA numStates numRegs trans init final =
-  CRA numStates numRegs (buildTransitionMap trans) init final
+buildCRA numStates numRegs trans etrans init final =
+  CRA numStates numRegs (buildTransitionMap trans) (buildETransitionMap etrans) init final
 
 
 --
@@ -289,7 +315,7 @@ combine :: (Hashable s, Eq s, Ord s) =>
      CRA s d
   -> CRA s d
   -> (CRA s d, (IdMap, IdMap), (IdMap, IdMap))
-combine (CRA numStatesL numRegsL transitionsL initL finalL) (CRA numStatesR numRegsR transitionsR initR finalR) =
+combine (CRA numStatesL numRegsL transitionsL eTransitionsL initL finalL) (CRA numStatesR numRegsR transitionsR eTransitionsR initR finalR) =
 
   let numStates = numStatesL * numStatesR
       stateMapL = [(i, [1..numStatesR] & fmap (+ ((i - 1) * numStatesR))) | i <- [1..numStatesL]] & idMapFromList
@@ -341,7 +367,9 @@ combine (CRA numStatesL numRegsL transitionsL initL finalL) (CRA numStatesR numR
         & concatMap oneTransition
         & buildTransitionMap
 
-  in (CRA numStates numRegs transitions M.empty M.empty, (stateMapL, regMapL), (stateMapR, regMapR))
+      eTransitions = undefined -- TODO!!!
+
+  in (CRA numStates numRegs transitions eTransitions M.empty M.empty, (stateMapL, regMapL), (stateMapR, regMapR))
 
 -- first come up with id maps...
 -- then create new CRA applying them...

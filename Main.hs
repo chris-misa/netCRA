@@ -24,7 +24,7 @@ testCRA1 =
           Transition 3 'b' addB 3,
           Transition 3 'a' addA 2
         ]
-  in buildCRA 3 2 transitions initF finalF
+  in buildCRA 3 2 transitions [] initF finalF
 
 --
 -- Example 5 from Alur et al., 2019.
@@ -43,7 +43,7 @@ testCRA2 =
           Transition 2 'a' addVal 2,
           Transition 2 '#' maxVal 1
         ]
-  in buildCRA 2 2 transitions initF finalF
+  in buildCRA 2 2 transitions [] initF finalF
 
 --
 -- Example 6 from Alur et al., 2019.
@@ -61,7 +61,7 @@ testCRA3 =
           Transition 1 'b' initOp 2,
           Transition 2 'a' theta 2
         ]
-  in buildCRA 2 2 transitions initF finalF
+  in buildCRA 2 2 transitions [] initF finalF
 
 --
 -- Simple tests of termination
@@ -76,7 +76,7 @@ termOnB =
           Transition 1 'c' noop 1,
           Transition 1 'b' noop 2
         ]
-  in buildCRA 2 0 transitions initF finalF
+  in buildCRA 2 0 transitions [] initF finalF
 
 termOnC :: CRA Char Int
 termOnC =
@@ -88,7 +88,7 @@ termOnC =
           Transition 1 'b' noop 1,
           Transition 1 'c' noop 2
         ]
-  in buildCRA 2 0 transitions initF finalF
+  in buildCRA 2 0 transitions [] initF finalF
 
 
 main :: IO ()
