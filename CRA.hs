@@ -336,7 +336,6 @@ combine (CRA numStatesL numRegsL transitionsL eTransitionsL initL finalL) (CRA n
         let s = if sL == sR then sL else (error $ "Something went wrong: trying to combine transitions for diff. symbols")
             q' = (stateMapL M.! qL) `L.intersect` (stateMapR M.! qR)
             update' = (translateUpdateOp regMapL updateL) `M.union` (translateUpdateOp regMapR updateR)
-
             t' = (stateMapL M.! tL) `L.intersect` (stateMapR M.! tR)
         in (q' `zip` t') & fmap (\(q', t') -> Transition q' s update' t')
 
@@ -367,7 +366,32 @@ combine (CRA numStatesL numRegsL transitionsL eTransitionsL initL finalL) (CRA n
         & concatMap oneTransition
         & buildTransitionMap
 
-      eTransitions = undefined -- TODO!!!
+      -- TODO: e transition combination starts here....needs testing!!!
+
+      combineETransitions (ETransition qL updateL tL) (ETransition qR updateR tR) =
+        let q' = (stateMapL M.! qL) `L.intersect` (stateMapR M.! qR)
+            update' = (translateUpdateOp regMapL updateL) `M.union` (translateUpdateOp regMapR updateR)
+            t' = (stateMapL M.! tL) `L.intersect` (stateMapR M.! tR)
+        in (q' `zip` t') & fmap (\(q', t') -> ETransition q' update' t')
+
+      updateETransStatesRegs stateMapUs regMapUs stateMapThem theirState (ETransition q update t) =
+        let theirState' = stateMapThem M.! theirState
+            q' = (stateMapUs M.! q ) & L.intersect theirState'
+            update' = translateUpdateOp regMapUs update
+            t' = (stateMapUs M.! t) & L.intersect theirState'
+        in (q' `zip` t') & fmap (\(q', t') -> ETransition q' update' t')
+
+      oneETransition (l, r) =
+        case (M.lookup l eTransitionsL, M.lookup r eTransitionsR) of
+          (Just lETrans, Just rETrans) -> [combineETransitions lt rt | lt <- lETrans, rt <- rETrans] & concatMap id
+          (Just lETrans, Nothing) -> concatMap (updateETransStatesRegs stateMapL regMapL stateMapR r) lETrans
+          (Nothing, Just rETrans) -> concatMap (updateETransStatesRegs stateMapR regMapR stateMapL l) rETrans
+          _ -> []
+
+      eTransitions =
+        [(l, r) | l <- [1..numStatesL], r <- [1..numStatesR]]
+        & concatMap oneETransition
+        & buildETransitionMap
 
   in (CRA numStates numRegs transitions eTransitions M.empty M.empty, (stateMapL, regMapL), (stateMapR, regMapR))
 
