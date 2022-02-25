@@ -101,17 +101,38 @@ evalUpdateOp :: RegAssign d -> d -> UpdateOp d -> RegAssign d
 evalUpdateOp ra cur u = M.mapWithKey doUpdate u
   where doUpdate regId expr = evalExpression ra cur expr
 
+-- Executes a single epsilon transition recursively generating the full set of reached (state, register) assignment pairs
+doETransition :: ETransitionMap d -> (Int, RegAssign d) -> [(Int, RegAssign d)]
+doETransition eTransMap (q, ra) = 
+  doETransRec [(q, ra)] []
+  where doETransRec ((q, ra):ras) res =
+          case M.lookup q eTransMap of
+            Just ts ->
+              let cur = error "Found reference to `CurVal` in an epsilon transition"
+                  followOne (ETransition _ u q') = (q', evalUpdateOp ra cur u)
+              in doETransRec ((fmap followOne ts) ++ ras) res
+            Nothing -> doETransRec ras ((q, ra):res)
+        doETransRec [] res = res
+
+-- Builds a CRA state from a list of (state id, register assignment pairs)
+buildState :: [(Int, RegAssign d)] -> State d
+buildState ras =
+  ras & foldl addToMap M.empty
+  where addToMap m (q, ra) = M.alter f q m
+          where f Nothing = Just [ra]
+                f (Just prev) = Just (ra:prev)
+
 --
--- Main CRA interface
+-- Main operational CRA interface
 --
 
 -- Produces the initial state of the given CRA
 initial :: (Hashable s, Eq s, Ord s) =>
      CRA s d
   -> State d
-initial (CRA _ _ _ _ initFunc _) =
-  M.map getInitRegAssign initFunc
-  where getInitRegAssign u = [evalUpdateOp emptyRegAssign (error $ "Init expr has cur!") u]
+initial (CRA _ _ _ eTransMap initFunc _) =
+  M.map getInitRegAssign initFunc & M.toList & concatMap (doETransition eTransMap) & buildState
+  where getInitRegAssign u = evalUpdateOp emptyRegAssign (error $ "Init expr has cur!") u
 
 -- Performs a transition for the given CRA, state, and tagged data word.
 -- Produces an updated state and any results produced by the transition.
@@ -121,7 +142,7 @@ transition :: (Hashable s, Eq s, Ord s) =>
   -> (s, d)
   -> (State d, [d])
 transition (CRA _ _ transMap eTransMap _ finalFunc) state (sym, cur) =
-  let state' = state & M.toList & concatMap doTransition & concatMap doETransition & buildState
+  let state' = state & M.toList & concatMap doTransition & concatMap (doETransition eTransMap) & buildState
       res = state' & M.toList & concatMap doFinal
   in (state', res)
 
@@ -132,27 +153,11 @@ transition (CRA _ _ transMap eTransMap _ finalFunc) state (sym, cur) =
               in fmap (\(Transition _ _ u q', ra) -> (q', evalUpdateOp ra cur u)) tsras
             Nothing -> []
 
-        doETransition (q, ra) = 
-          doETransRec [(q, ra)] []
-          where doETransRec ((q, ra):ras) res =
-                  case M.lookup q eTransMap of
-                    Just ts ->
-                      let cur = error "Found reference to `CurVal` in an epsilon transition"
-                          followOne (ETransition _ u q') = (q', evalUpdateOp ra cur u)
-                      in doETransRec ((fmap followOne ts) ++ ras) res
-                    Nothing -> doETransRec ras ((q, ra):res)
-                doETransRec [] res = res
-
         doFinal (q, ras) =
           case M.lookup q finalFunc of
             Just expr -> fmap (\ra -> evalExpression ra cur expr) ras
             Nothing -> []
 
-        buildState ras =
-          ras & foldl addToMap M.empty
-          where addToMap m (q, ra) = M.alter f q m
-                  where f Nothing = Just [ra]
-                        f (Just prev) = Just (ra:prev)
 
 -- Runs the given CRA from its initial state over a list of tagged data words.
 runList :: (Hashable s, Eq s, Ord s) =>

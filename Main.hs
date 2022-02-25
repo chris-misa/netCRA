@@ -12,8 +12,8 @@ import QRE
 testCRA1 :: CRA Char Int
 testCRA1 =
   let initOp = buildUpdateOp [exprConst 0, exprConst 0]
-      addA = buildUpdateOp [exprUOp (+1) (RegRead 1), RegRead 2]
-      addB = buildUpdateOp [RegRead 1, exprUOp (+1) (RegRead 2)]
+      addA = buildUpdateOp [exprBinOp (+) (RegRead 1) CurVal, RegRead 2]
+      addB = buildUpdateOp [RegRead 1, exprBinOp (+) (RegRead 2) CurVal]
       initF = buildInitFunc [(1, initOp)]
       finalF = buildFinalFunc [(2, RegRead 1), (3, RegRead 2)]
       transitions = [
@@ -89,6 +89,56 @@ termOnC =
           Transition 1 'c' noop 2
         ]
   in buildCRA 2 0 transitions [] initF finalF
+
+--
+-- Simple test of epsilon transitions
+-- Accepts (a, x), {(a, _), (b, _), (c, _)} and produces x + 10, x + 100, or x + 50 depending on the second symbol
+--
+testETrans1 :: CRA Char Int
+testETrans1 =
+  let initOp = buildUpdateOp [exprConst 0]
+      loadCurVal = buildUpdateOp [exprUOp id CurVal]
+      addX x = buildUpdateOp [exprUOp (+ x) (RegRead 1)]
+      noop = buildUpdateOp [exprUOp id (RegRead 1)]
+      initF = buildInitFunc [(1, initOp)]
+      finalF = buildFinalFunc [(6, RegRead 1)]
+      transitions = [
+          Transition 1 'a' loadCurVal 2,
+          Transition 3 'a' noop 6,
+          Transition 4 'b' noop 6,
+          Transition 5 'c' noop 6
+        ]
+      etransitions = [
+          ETransition 2 (addX 10) 3,
+          ETransition 2 (addX 100) 4,
+          ETransition 2 (addX 50) 5
+        ]
+  in buildCRA 6 1 transitions etransitions initF finalF
+
+--
+-- Example 4 from Alur et al., 2019.
+-- Same as testCRA1, except expressed using epsilon transitions and non-determinism
+--
+testETrans2 :: CRA Char Int
+testETrans2 =
+  let initOp = buildUpdateOp [exprConst 0]
+      addCurVal = buildUpdateOp [exprBinOp (+) (RegRead 1) CurVal]
+      noop = buildUpdateOp [exprUOp id (RegRead 1)]
+      initF = buildInitFunc [(1, initOp)]
+      finalF = buildFinalFunc [(4, RegRead 1), (5, RegRead 1)]
+      transitions = [
+          Transition 2 'a' addCurVal 2,
+          Transition 2 'a' addCurVal 4,
+          Transition 2 'b' noop 2,
+          Transition 3 'b' addCurVal 3,
+          Transition 3 'b' addCurVal 5,
+          Transition 3 'a' noop 3
+        ]
+      etransitions = [
+          ETransition 1 initOp 2,
+          ETransition 1 initOp 3
+        ]
+  in buildCRA 5 1 transitions etransitions initF finalF
 
 
 main :: IO ()
