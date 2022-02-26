@@ -31,21 +31,19 @@ key-based stuff: splitting into substeams based on a key-generating function, th
 
 
 --
--- Match a single symbol and emit a constant value when the symbol matches
+-- Match a single symbol (at the beginning of the stream) and evaluate expr when the symbol matches
 -- Note that `expr` should not have any register reads (enforce this later...)
 --
-atom :: (Hashable s, Eq s, Ord s) => s -> s -> Expression d -> CRA s d
-atom yesSym noSym expr =
+atom :: (Hashable s, Eq s, Ord s) => s -> Expression d -> CRA s d
+atom sym expr =
   let noop = buildUpdateOp []
+      updateReg = buildUpdateOp [expr]
       initF = buildInitFunc [(1, noop)]
-      finalF = buildFinalFunc [(2, expr)]
+      finalF = buildFinalFunc [(2, RegRead 1)]
       transitions = [
-          Transition 1 yesSym noop 2,
-          Transition 1 noSym noop 1,
-          Transition 2 yesSym noop 2,
-          Transition 2 noSym noop 1
+          Transition 1 sym updateReg 2
         ]
-  in buildCRA 2 0 transitions [] initF finalF
+  in buildCRA 2 1 transitions [] initF finalF
 
 
 --
@@ -92,35 +90,64 @@ ifelse l@(CRA _ _ _ _ initL finalL) r@(CRA _ _ _ _ initR finalR) =
 -- Quantitative concatenation (note the primitive operation must be binary)
 --
 split :: (Hashable s, Eq s, Ord s) => CRA s d -> CRA s d -> Prim d -> CRA s d
-split l@(CRA _ _ _ _ initL finalL) r@(CRA _ _ _ _ initR finalR) combOp =
+split l@(CRA numStatesL numRegsL transitionsL eTransitionsL initL finalL) r@(CRA numStatesR numRegsR transitionsR eTransitionsR initR finalR) combOp =
 
-  let (CRA numStates numRegs transitions eTransitions _ _, (stateMapL, regMapL), (stateMapR, regMapR)) = combine l r
+  let numStates = numStatesL + numStatesR
+      stateMapL = [(i, [i]) | i <- [1..numStatesL]] & idMapFromList
+      stateMapR = [(i, [i + numStatesL]) | i <- [1..numStatesR]] & idMapFromList
 
-      -- Just translate left init function
+      numRegs = numRegsL + numRegsR + 1
+      regMapL = [(i, [i]) | i <- [1..numRegsL]] & idMapFromList
+      regMapR = [(i, [i + numRegsL]) | i <- [1..numRegsR]] & idMapFromList
+
+      auxReg = numRegs
+
+      -- Directly translate left initial
       initF = translateInit stateMapL regMapL initL
 
-      auxReg = numRegs + 1
-      -- internalTrans = [makeInternalTrans from to | from <- M.toList finalL, to <- M.toList initR]
-      --   where makeInternalTrans (q, exp) (t, op) =
-      --           let op' = op & M.insert auxReg exp
-      --           in EpsilonTransition q op' t
+      --
+      -- Directly translate state and register ids for transitions
+      --
+
+      updateTransStatesRegs stateMap regMap (Transition q s update t) =
+        let [q'] = stateMap M.! q
+            update' = translateUpdateOp regMap update
+            [t'] = stateMap M.! t
+        in Transition q' s update' t'
+
+      transitions =
+        let lTrans = transitionsL & M.toList & concatMap snd & fmap (updateTransStatesRegs stateMapL regMapL)
+            rTrans = transitionsR & M.toList & concatMap snd & fmap (updateTransStatesRegs stateMapR regMapR)
+        in (lTrans ++ rTrans) & buildTransitionMap
+          
+      --
+      -- Directly translate state and register ids for epsilon transitions
+      --
+
+      updateETransStatesRegs stateMap regMap (ETransition q update t) =
+        let [q'] = stateMap M.! q
+            update' = translateUpdateOp regMap update
+            [t'] = stateMap M.! t
+        in ETransition q' update' t'
+
+      eTransitions =
+        let lETrans = eTransitionsL & M.toList & concatMap snd & fmap (updateETransStatesRegs stateMapL regMapL)
+            rETrans = eTransitionsR & M.toList & concatMap snd & fmap (updateETransStatesRegs stateMapR regMapR)
+            internalETrans = 
+              [makeInternalTrans from to | from <- M.toList finalL, to <- M.toList initR]
+        in (lETrans ++ rETrans ++ internalETrans) & buildETransitionMap
+
+        where makeInternalTrans (q, exp) (t, op) =
+                let [q'] = stateMapL M.! q
+                    op' = (translateUpdateOp regMapR op) & M.insert auxReg (translateExpr regMapL exp)
+                    [t'] = stateMapR M.! t
+                in ETransition q' op' t'
 
       -- Translate right final and add combOp looking up the previous result of left final
       finalF = translateFinal stateMapR regMapR finalR & M.map addCombOp
         where addCombOp e = PrimOp combOp [RegRead auxReg, e]
 
   in CRA numStates (numRegs + 1) transitions eTransitions initF finalF
-
--------------------------------------
-{-
-As with non-determinism, adding epsilon transitions requires a non-trivial pass on the CRA code (currently incomplete)
-Not that it's hard, just that it requries (non-trivial) changes in a number of places...
-
-Seems like the best approach is to have separate epsilon transition map in the CRA data structure (keyed just by start state id).
-
-May should also should make CRAs named records since we might need to continue tacking things on?
--}
--------------------------------------
 
 --
 -- Quantitative iteration (note the primitive operation must be binary)

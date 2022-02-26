@@ -96,10 +96,17 @@ evalExpression ra cur (PrimOp (Prim _ arity op) children)
       let results = fmap (evalExpression ra cur) children
       in op results
 
--- Evaluates all expressions of the given update operation and produces an update register assignment
+-- Evaluates all expressions of the given update operation and produces an update register assignment.
+-- Also copies over any assigned registers not referenced by the update operation.
 evalUpdateOp :: RegAssign d -> d -> UpdateOp d -> RegAssign d
-evalUpdateOp ra cur u = M.mapWithKey doUpdate u
-  where doUpdate regId expr = evalExpression ra cur expr
+evalUpdateOp ra cur u =
+  let keys = M.keys ra `L.union` M.keys u
+  in keys & fmap doUpdate & M.fromList
+  where doUpdate key =
+          case (M.lookup key u, M.lookup key ra) of
+            (Just expr, _) -> (key, evalExpression ra cur expr)
+            (Nothing, Just val) -> (key, val)
+            _ -> error "shouldn't happen"
 
 -- Executes a single epsilon transition recursively generating the full set of reached (state, register) assignment pairs
 doETransition :: ETransitionMap d -> (Int, RegAssign d) -> [(Int, RegAssign d)]
@@ -302,6 +309,7 @@ translateFinal :: IdMap -> IdMap -> FinalFunc d -> FinalFunc d
 translateFinal stateMap regMap final =
   final & M.toList & concatMap doUpdate & M.fromList
   where doUpdate (q, e) = [(q', translateExpr regMap e) | q' <- stateMap M.! q]
+
 
 --
 -- Produces a CRA that combines two input CRAs by executing
