@@ -133,6 +133,12 @@ buildState ras =
 -- Main operational CRA interface
 --
 
+-- TODO: need to fix some issues with evaluation:
+-- on both initial and transition, we need to check if any states passed through in epsilon transitions are final
+-- and if so produce output!
+-- .... probably only need to update doETransition above to check for final states...
+-- .... but the call points also need modification to deal with results.
+
 -- Produces the initial state of the given CRA
 initial :: (Hashable s, Eq s, Ord s) =>
      CRA s d

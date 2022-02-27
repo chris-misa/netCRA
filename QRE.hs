@@ -152,8 +152,35 @@ split l@(CRA numStatesL numRegsL transitionsL eTransitionsL initL finalL) r@(CRA
 --
 -- Quantitative iteration (note the primitive operation must be binary)
 --
-iter :: CRA s d -> d -> Prim d -> CRA s d
-iter = undefined
+iter :: (Hashable s, Eq s, Ord s) => CRA s d -> d -> Prim d -> CRA s d
+iter (CRA numStates numRegs transitions eTransitions init final) startVal op =
+  
+  let numStates' = numStates + 2
+      newInitState = numStates + 1
+      newFinalState = numStates + 2
+
+      numRegs' = numRegs + 1
+      auxReg = numRegs'
+
+      init' =
+        let initOp = M.singleton auxReg (exprConst startVal)
+        in M.singleton newInitState initOp
+
+      eTransitions' =
+        let noop = buildUpdateOp []
+            updateAuxReg expr = M.singleton auxReg (PrimOp op [RegRead auxReg, expr])
+
+            initETrans = M.keys init & fmap (\t -> ETransition newInitState noop t)
+            finalETrans = M.toList final & fmap (\(q, e) -> ETransition q (updateAuxReg e) newFinalState)
+      
+            internalETrans = M.keys init & fmap (\t -> ETransition newFinalState noop t)
+        in (initETrans ++ finalETrans ++ internalETrans) & buildETransitionMap
+
+      final' = M.singleton newFinalState (RegRead auxReg)
+  
+  in CRA numStates' numRegs' transitions eTransitions' init' final'
+      
+  
 {-
 Add register for keeping track of aggregate value.
 Add an epsilon transition from unique final state to unique initial state.
