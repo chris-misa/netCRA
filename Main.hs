@@ -140,6 +140,46 @@ testETrans2 =
         ]
   in buildCRA 5 1 transitions etransitions initF finalF
 
+--
+-- Simple tests of atom with a single higher-order QRE combinator
+--
+
+--
+-- Test `op` QRE combinators
+-- Matches the prefix containing a single 'a' and adds 10.
+--
+testQRE1 :: CRA Char Int
+testQRE1 = op (atom 'a' CurVal) (atom 'a' (exprConst 10)) (primBinary (+))
+
+--
+-- Test `ifelse` QRE combinator
+-- Matches the prefix 'a' | 'b', adds 1 if the symbols is 'a', adds 10 if the symbol is 'b'
+--
+testQRE2 :: CRA Char Int
+testQRE2 = ifelse (atom 'a' (exprUOp (+1) CurVal)) (atom 'b' (exprUOp (+10) CurVal))
+
+--
+-- Test `split` QRE combinator
+-- Matches the prefix 'a' 'a' 'b' and returns the max value of all matches elements.
+--
+testQRE3 :: CRA Char Int
+testQRE3 =
+  let primMax = primBinary max
+  in split (atom 'a' CurVal) (split (atom 'a' CurVal) (atom 'b' CurVal) primMax) primMax
+
+--
+-- Test the `iter` combinator
+-- Matches the prefix 'a'* and sums all values
+--
+testQRE4 :: CRA Char Int
+testQRE4 = iter (atom 'a' CurVal) 0 (primBinary (+))
+
+
+--
+-- Combined tests with multiple QRE combinators
+--
+
+-- TODO...
 
 main :: IO ()
 main = do

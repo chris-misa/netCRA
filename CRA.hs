@@ -121,6 +121,22 @@ doETransition eTransMap (q, ra) =
             Nothing -> doETransRec ras ((q, ra):res)
         doETransRec [] res = res
 
+doETransition' :: ETransitionMap d -> FinalFunc d -> d -> (Int, RegAssign d) -> ([(Int, RegAssign d)], [d])
+doETransition' eTransMap finalF cur (q, ra) = 
+  doETransRec [(q, ra)] [] []
+  where doETransRec ((q, ra):ras) res outs =
+          let outs' =
+                case M.lookup q finalF of
+                  Just expr -> (evalExpression ra cur expr):outs
+                  Nothing -> outs
+          in case M.lookup q eTransMap of
+              Just ts ->
+                let cur = error "Found reference to `CurVal` in an epsilon transition"
+                    followOne (ETransition _ u q') = (q', evalUpdateOp ra cur u)
+                in doETransRec ((fmap followOne ts) ++ ras) res outs'
+              Nothing -> doETransRec ras ((q, ra):res) outs'
+        doETransRec [] res outs = (res, outs)
+
 -- Builds a CRA state from a list of (state id, register assignment pairs)
 buildState :: [(Int, RegAssign d)] -> State d
 buildState ras =
@@ -133,19 +149,16 @@ buildState ras =
 -- Main operational CRA interface
 --
 
--- TODO: need to fix some issues with evaluation:
--- on both initial and transition, we need to check if any states passed through in epsilon transitions are final
--- and if so produce output!
--- .... probably only need to update doETransition above to check for final states...
--- .... but the call points also need modification to deal with results.
-
 -- Produces the initial state of the given CRA
 initial :: (Hashable s, Eq s, Ord s) =>
      CRA s d
-  -> State d
-initial (CRA _ _ _ eTransMap initFunc _) =
-  M.map getInitRegAssign initFunc & M.toList & concatMap (doETransition eTransMap) & buildState
-  where getInitRegAssign u = evalUpdateOp emptyRegAssign (error $ "Init expr has cur!") u
+  -> (State d, [d])
+initial (CRA _ _ _ eTransMap initFunc finalFunc) =
+  M.map getInitRegAssign initFunc & M.toList & fmap (doETransition' eTransMap finalFunc cur) & flattenOutput [] []
+  where cur = error "Init expr has cur!"
+        getInitRegAssign u = evalUpdateOp emptyRegAssign cur u
+        flattenOutput flatRas flatOuts ((ras, outs):theRest) = flattenOutput (ras ++ flatRas) (outs ++ flatOuts) theRest
+        flattenOutput flatRas flatOuts [] = (buildState flatRas, flatOuts)
 
 -- Performs a transition for the given CRA, state, and tagged data word.
 -- Produces an updated state and any results produced by the transition.
@@ -155,9 +168,7 @@ transition :: (Hashable s, Eq s, Ord s) =>
   -> (s, d)
   -> (State d, [d])
 transition (CRA _ _ transMap eTransMap _ finalFunc) state (sym, cur) =
-  let state' = state & M.toList & concatMap doTransition & concatMap (doETransition eTransMap) & buildState
-      res = state' & M.toList & concatMap doFinal
-  in (state', res)
+  state & M.toList & concatMap doTransition & fmap (doETransition' eTransMap finalFunc cur) & flattenOutput [] []
 
   where doTransition (q, ras) =
           case M.lookup (q, sym) transMap of
@@ -166,11 +177,8 @@ transition (CRA _ _ transMap eTransMap _ finalFunc) state (sym, cur) =
               in fmap (\(Transition _ _ u q', ra) -> (q', evalUpdateOp ra cur u)) tsras
             Nothing -> []
 
-        doFinal (q, ras) =
-          case M.lookup q finalFunc of
-            Just expr -> fmap (\ra -> evalExpression ra cur expr) ras
-            Nothing -> []
-
+        flattenOutput flatRas flatOuts ((ras, outs):theRest) = flattenOutput (ras ++ flatRas) (outs ++ flatOuts) theRest
+        flattenOutput flatRas flatOuts [] = (buildState flatRas, flatOuts)
 
 -- Runs the given CRA from its initial state over a list of tagged data words.
 runList :: (Hashable s, Eq s, Ord s) =>
@@ -178,8 +186,8 @@ runList :: (Hashable s, Eq s, Ord s) =>
   -> [(s, d)]
   -> [d]
 runList a l =
-  let s0 = initial a
-  in reverse $ runListInternal a s0 l []
+  let (s0, r0) = initial a
+  in r0 ++ (reverse $ runListInternal a s0 l [])
   where runListInternal a s (x:xs) res =
           let (s', ys) = transition a s x
           in runListInternal a s' xs (ys ++ res)

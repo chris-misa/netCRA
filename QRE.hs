@@ -188,4 +188,9 @@ Add an epsilon transition from unique final state to unique initial state.
 Add new initial state which supplies the initial value of the aggregate register.
 Add new final state which produces the aggregate register value.
 ...this might produce an ambiguous CRA so take the product with a (register free) DFA that accepts the right language (f*)
+
+What does it mean for a CRA to be ambiguous?
+
+Unambiguous means for each trace either (i) the trace does not end in a final state, or (ii) the trace ends in exactly one final state.
+
 -}
