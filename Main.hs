@@ -179,7 +179,21 @@ testQRE4 = iter (atom 'a' CurVal) 0 (primBinary (+))
 -- Combined tests with multiple QRE combinators
 --
 
--- TODO...
+--
+-- Matches (ab*c)* and returns the difference between each a, c pair
+--
+testQRE5 :: CRA Char Int
+testQRE5 =
+  iter
+    (split
+      (atom 'a' CurVal)
+      (split
+        (iter (atom 'b' CurVal) 0 (primBinary (+)))
+        (atom 'c' CurVal)
+        (primBinary (curry snd)))
+      (primBinary (\a c -> c - a)))
+    0
+    (primBinary (curry snd))
 
 main :: IO ()
 main = do

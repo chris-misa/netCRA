@@ -174,13 +174,13 @@ iter (CRA numStates numRegs transitions eTransitions init final) startVal op =
             finalETrans = M.toList final & fmap (\(q, e) -> ETransition q (updateAuxReg e) newFinalState)
       
             internalETrans = M.keys init & fmap (\t -> ETransition newFinalState noop t)
-        in (initETrans ++ finalETrans ++ internalETrans) & buildETransitionMap
+            prevETrans = M.toList eTransitions & concatMap snd
+        in (initETrans ++ finalETrans ++ internalETrans ++ prevETrans) & buildETransitionMap
 
-      final' = M.singleton newFinalState (RegRead auxReg)
+      final' = [(newFinalState, RegRead auxReg), (newInitState, RegRead auxReg)] & M.fromList
   
   in CRA numStates' numRegs' transitions eTransitions' init' final'
-      
-  
+
 {-
 Add register for keeping track of aggregate value.
 Add an epsilon transition from unique final state to unique initial state.
@@ -191,6 +191,6 @@ Add new final state which produces the aggregate register value.
 
 What does it mean for a CRA to be ambiguous?
 
-Unambiguous means for each trace either (i) the trace does not end in a final state, or (ii) the trace ends in exactly one final state.
+Each input word has at most one accepting path.
 
 -}
