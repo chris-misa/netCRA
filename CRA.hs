@@ -279,20 +279,6 @@ buildCRA numStates numRegs trans etrans init final =
 -- Primitive operations for combinators
 --
 
--- Need: product of states, union of registers (for `op`), other things?
--- In particular: combine two CRAs such that we get product of state spaces and union of registers
--- but also produce some way of tracking which of the new states/registers was associated with which of the original CRAs
-
--- Idea 1: do a pre-combine which remaps all state and register indices (for transitions as well as for init/final functions)
---  then combining the (independent) CRAs is straightforward
-
--- Idea 2: all register and state id's are drawn from the same increasing sequence and hence are unique from the beginning.
---  still have the issue of how to get product of states....
-
--- Idea 3: use arbitry types for register and state ids...can then just use tuples / per-CRA labels to disambiguate...
-
--- Idea 4 (current impl below): single combine function to produce the core combined CRA also returns maps from ids used in inputs to ids used in output.
-
 type IdMap = M.HashMap Int [Int]
 
 idMapFromList :: [(Int, [Int])] -> IdMap
@@ -422,21 +408,15 @@ combine (CRA numStatesL numRegsL transitionsL eTransitionsL initL finalL) (CRA n
 
   in (CRA numStates numRegs transitions eTransitions M.empty M.empty, (stateMapL, regMapL), (stateMapR, regMapR))
 
--- first come up with id maps...
--- then create new CRA applying them...
 
-{-
+-- Converts a possibly non-deterministic CRA to an equivalent deterministic CRA
+makeDeterministic :: (Hashable s, Eq s, Ord s) =>
+     CRA s d
+  -> CRA s d
+makeDeterministic (CRA numStates numRegs transitions eTransitions init final) = undefined
+  -- first need to elim epsilon transitions
+  -- then do the "simulate" from initial states thing
 
-Look at adding transitions on a per-transition-symbol basis:
-
-For each transition symbol s,
-  For each combined start state (L, R),
-    If L and R both transitions on s, add transitions (L, R) -> [(L', R') | L' <- all trans from L, R' <- all trans from R]
-    else if L transitions on s, add (L, R) -> [(L', R) | L' <- all trans from L]
-    else if R transitions on s, add (L, R) -> [(L, R') | R' <- all trans from R]
-
-
-... have to make sure (prove) that this correctly simulates both L and R on any given sequence of input symbols...
-in other words, the projection back to L or R should be in the same state for any given input sequence...
--}
-
+  -- need to combine transitions:
+  -- serially for epsilon transitions
+  -- parallelly for for the simulate step
