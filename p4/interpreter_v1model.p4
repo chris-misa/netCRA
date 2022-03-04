@@ -222,6 +222,11 @@ control TestIngress(inout headers hdr,
         cur_state.read(meta.cur_state, (bit<32>)0);
         meta.sym = get_field(sym_fid, hdr, meta);
         meta.val = get_field(val_fid, hdr, meta);
+        meta.matched = 1;
+    }
+
+    action no_op() {
+        meta.matched = 0;
     }
 
     table filter_match {
@@ -230,9 +235,10 @@ control TestIngress(inout headers hdr,
         }
         actions = {
             map_sym_val;
+            no_op();
         }
         size = 1;
-        default_action = map_sym_val(0, 0);
+        default_action = no_op();
     }
 
     // ---------------------------------------------------------
@@ -250,14 +256,19 @@ control TestIngress(inout headers hdr,
       reg_data_t tmp1;
       reg_data_t tmp2;
 
+
       // load is a list of (reg_id, addr)
       // we load each reg_id into the given addresses in scratch space
+      // note that the first 32 bits of scratch_space are reserved for the data value.
 
       registers.read(tmp, (bit<32>)(load[7:0]));
       scratch_space = scratch_space | ((bit<SCRATCH_SPACE_SIZE>)tmp << load[15:8]);
 
       registers.read(tmp, (bit<32>)(load[23:16]));
       scratch_space = scratch_space | ((bit<SCRATCH_SPACE_SIZE>)tmp << load[31:24]);
+
+      // Load data value into first 32 bits of scratch space.
+      scratch_space[31:0] = meta.val;
       
       // update is a list of (op_code, left_addr, right_addr, out_addr)
 
@@ -280,16 +291,21 @@ control TestIngress(inout headers hdr,
       cur_state.write(0, next_state);
     }
 
+    action no_transition() {
+    }
+
     table transitions {
       key = {
         meta.cur_state : exact;
         meta.sym : exact;
+        meta.matched : exact;
       }
       actions = {
         do_transition;
+        no_transition;
       }
       size = MAX_NUM_TRANSITIONS;
-      default_action = do_transition(0, 0, 0, 0);
+      default_action = no_transition();
     }
 
 
