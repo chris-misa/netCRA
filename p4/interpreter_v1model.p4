@@ -110,7 +110,7 @@ struct headers {
     port_layer_t port_layer;
 }
 
-fivetuple_t extract_ft_data(in fivetuple_bits_t ft){
+fivetuple_t extract_ft_data(in fivetuple_bits_t ft) {
     fivetuple_t ft_res;
     ft_res.src_ip = ft[31:0];
     ft_res.dst_ip = ft[63:32];
@@ -120,17 +120,26 @@ fivetuple_t extract_ft_data(in fivetuple_bits_t ft){
     return ft_res;
 }
 
-fivetuple_bits_t pack_ft_data(in fivetuple_t ft){
+fivetuple_bits_t pack_ft_data(in fivetuple_t ft) {
     return ft.proto ++ ft.dst_port ++ ft.src_port ++ ft.dst_ip ++ ft.src_ip;
 }
 
-reg_data_t get_field(in field_id_t fid, in headers hdr, in metadata meta){
+reg_data_t get_field(in field_id_t fid, in headers hdr, in metadata meta, in standard_metadata_t std_meta) {
     reg_data_t ret = 0;
-    if(fid == 0){
+    if (fid == 0) {
         ret = 1;
     }
-    else if(fid == 1){
-        ret = (bit<32>)hdr.ipv4.totalLen;
+    else if (fid == 1) {
+        ret = (reg_data_t)std_meta.ingress_global_timestamp;
+    }
+    else if (fid == 2) {
+        ret = (reg_data_t)hdr.ipv4.totalLen;
+    }
+    else if (fid == 3) {
+        ret = (reg_data_t)hdr.port_layer.tcp.seq_no;
+    }
+    else if (fid == 4) {
+        ret = (reg_data_t)hdr.port_layer.tcp.ack_no;
     }
     else {
         ret = 0;
@@ -138,7 +147,7 @@ reg_data_t get_field(in field_id_t fid, in headers hdr, in metadata meta){
     return ret;
 }
 
-reg_data_t apply_op(in op_id_t op, in reg_data_t old_val, in reg_data_t pkt_val){
+reg_data_t apply_op(in op_id_t op, in reg_data_t old_val, in reg_data_t pkt_val) {
     reg_data_t res = 0;
     if(op == 0){//update
         res = pkt_val;
@@ -218,10 +227,10 @@ control TestIngress(inout headers hdr,
     // Initial map and read cur_state
     // ---------------------------------------------------------
 
-    action map_sym_val(field_id_t sym_fid, field_id_t val_fid) {
+    action map_sym_val(reg_data_t sym, field_id_t val_fid) {
         cur_state.read(meta.cur_state, (bit<32>)0);
-        meta.sym = get_field(sym_fid, hdr, meta);
-        meta.val = get_field(val_fid, hdr, meta);
+        meta.sym = sym;
+        meta.val = get_field(val_fid, hdr, meta, standard_metadata);
         meta.matched = 1;
     }
 
@@ -231,7 +240,12 @@ control TestIngress(inout headers hdr,
 
     table filter_match {
         key = {
-            hdr.ipv4.srcAddr: ternary; // can we have a non-matching table?
+            hdr.ipv4.srcAddr: ternary;
+            hdr.ipv4.dstAddr: ternary;
+            hdr.ipv4.protocol: ternary;
+            hdr.port_layer.tcp.src_port: ternary;
+            hdr.port_layer.tcp.dst_port: ternary;
+            hdr.port_layer.tcp.flags: ternary;
         }
         actions = {
             map_sym_val;
