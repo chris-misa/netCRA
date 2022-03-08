@@ -409,14 +409,98 @@ combine (CRA numStatesL numRegsL transitionsL eTransitionsL initL finalL) (CRA n
   in (CRA numStates numRegs transitions eTransitions M.empty M.empty, (stateMapL, regMapL), (stateMapR, regMapR))
 
 
+-- Combines the given update operations in serial---simulates updates by o1 being read by o2
+serializeUpdateOps :: UpdateOp d -> UpdateOp d -> UpdateOp d
+serializeUpdateOps o1 o2 =
+  (o2 & M.map pullPrevOp) `M.union` o1
+  where pullPrevOp (PrimOp o e) = PrimOp o (fmap pullPrevOp e)
+        pullPrevOp (RegRead i) = case M.lookup i o1 of
+                                    Just expr -> expr
+                                    Nothing -> RegRead i
+        pullPrevOp CurVal = CurVal
+
+
+-- Maps the register ideas of all reads (inputs) and writes (outputs) of the given update operation
+mapUpdateOpsInsOuts :: IdMap -> IdMap -> UpdateOp d -> UpdateOp d
+mapUpdateOpsInsOuts inputMap outputMap o =
+  o & M.mapKeys (head . (M.!) outputMap) & M.map mapInputs
+  where mapInputs (PrimOp o e) = PrimOp o (fmap mapInputs e)
+        mapInputs (RegRead i) = RegRead (head (inputMap M.! i))
+        mapInputs CurVal = CurVal
+
+
+-- Generates a map from state ids to register maps for each state id
+getRegMaps :: Int -> Int -> M.HashMap Int IdMap
+getRegMaps numStates numRegs = [1..numStates] & fmap regMapForState & M.fromList
+  where regMapForState q = (q, [1..numRegs] & fmap (\r -> (r, [r + ((q - 1) * numRegs)])) & M.fromList)
+
+-- Computes the epsilon closure of given node q
+-- For CRA's, the epsilon closure includes a combined operation that must be executed before the closure is entered
+-- to realize any update operations on the subsumed epsilon transitions.
+-- Assumes stateRegMap maps each state to a disjoint set of registers.
+getEpsilonClosure :: Int -> ETransitionMap d -> M.HashMap Int IdMap -> (UpdateOp d, [Int])
+getEpsilonClosure q etrans stateRegMap =
+  recEClosure q M.empty [q]
+  where recEClosure q combinedOp states =
+          case M.lookup q etrans of
+            Just ts ->
+              let oneETrans (o, ss) (ETransition q update t) =
+                    let o' = serializeUpdateOps o (mapUpdateOpsInsOuts (stateRegMap M.! q) (stateRegMap M.! t) update)
+                        ss' = t:ss
+                    in recEClosure t o' ss'
+              in foldl oneETrans (combinedOp, states) ts
+            Nothing -> (combinedOp, states)
+
+-- TODO: The bug here is that we need to accumulate the input register mapping even when there's not a read!
+-- ================================================
+--
+-- if we have 1 --> 2 --> 3, then any reads in 3 need to either be build on the results generated in 2 or w.r.t. ids of 1
+-- maybe this is a modification to serializeUpdateOps?
+--    ----------> easiest way to deal with it is to enforce (perhaps automatically?) that there's always at least self-read operations?
+--    since then the existing mechanism will deal with propegating the right mappings
+--
+
+{-
+ - need to go over each (sub)path along etrans from q
+ - at each step we accumulate the operation that got to that node and add the node to the list
+ -
+ - 
+ -}
+
 -- Converts a possibly non-deterministic CRA to an equivalent deterministic CRA
 makeDeterministic :: (Hashable s, Eq s, Ord s) =>
      CRA s d
   -> CRA s d
-makeDeterministic (CRA numStates numRegs transitions eTransitions init final) = undefined
-  -- first need to elim epsilon transitions
-  -- then do the "simulate" from initial states thing
+makeDeterministic (CRA numStates numRegs transitions eTransitions init final) =
+  let numRegs' = numStates * numRegs
+  in undefined
 
-  -- need to combine transitions:
-  -- serially for epsilon transitions
-  -- parallelly for for the simulate step
+-- NEED TO ASSUME INPUT CRA is unambiguous---otherwise this falls apart because you might have more than one register valuation at each state!
+
+{-
+ - Make deterministic simulates evaluation keeping track of the sets of active state at each step
+ - Here, each transition might do different updates so each combined state needs an independent set of registers
+ - for each original state.
+ -
+ - Transitions in the output then combine operations of all transitions between the state sets in the input, but
+ - separate the sets of registers read from and written to based on the states of the transition on the input side.
+ -
+ - The kind of interesting thing is that registers are a CRA-global concept whereas here we're talking about sets of registers
+ - at each (combined) states being dependent on the (local) transitions / absorbed states...
+ -  -> the easiest thing to do whould be to initial set up a set of registers for each state so there's a single deterministic
+ -     and global state-to-register-set mapping to use during this process, then later go back and minimize the number of registers
+ -     required...
+ -     -> map any register reads to the register set of the originating state
+ -     -> map any register writes to the register set of the destination state
+ -
+ - Also need to deal with epsilon transitions.... should this be a separate step (perhaps before making deterministic)?
+ -  -> The epsolon closure of a node is a set of nodes and a combined transition (to be executed before reaching the combined node!)
+ -     that updates the register sets of all nodes reached via an epsilon-transition.
+ -  -> The tricky thing is that this combined transition must be generated for each path (and subpath) along the epsilon transitions
+ -     eminating from the node which requires sequential combination of the original transition operations...
+ -
+ - Tasks:
+ - - implement serial combination of transition operations (preserving register ids)
+ - - implement the main bit
+ - - implement register minimization (or maybe wait till after DFA minimization to do this?)
+ -}

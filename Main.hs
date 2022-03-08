@@ -2,6 +2,8 @@ module Main where
 
 import Data.Function ((&))
 
+import qualified Data.HashMap.Strict as M
+
 import CRA
 import QRE
 
@@ -173,6 +175,21 @@ testQRE3 =
 --
 testQRE4 :: CRA Char Int
 testQRE4 = iter (atom 'a' CurVal) 0 (primBinary (+))
+
+--
+-- Compute the difference between each data element
+-- Interestingly, it's hard to see how to implement this using QRE-based primitives
+--
+testDiff1 :: CRA Char Int
+testDiff1 = 
+  let initOp = buildUpdateOp [exprConst 0, exprConst 0]
+      updateOp = buildUpdateOp [CurVal, exprBinOp (-) CurVal (RegRead 1)]
+      initF = buildInitFunc [(1, initOp)]
+      finalF = buildFinalFunc [(1, RegRead 2)]
+      transitions = [
+          Transition 1 'a' updateOp 1
+        ]
+  in buildCRA 1 2 transitions [] initF finalF
 
 
 --
