@@ -45,6 +45,20 @@ atom sym expr =
         ]
   in buildCRA 2 1 transitions [] initF finalF
 
+--
+-- Lagy atom --- failsafe incase the more comprehensive lag doesn't workout
+-- ...still a bit buggy when combined with other QRE operators...
+--
+lagtom :: (Hashable s, Eq s, Ord s) => s -> Expression d -> d -> CRA s d
+lagtom sym expr startVal =
+  let updateReg = buildUpdateOp [expr, RegRead 1]
+      initF = buildInitFunc [(1, buildUpdateOp [exprConst startVal, exprConst startVal])]
+      finalF = buildFinalFunc [(1, RegRead 2)]
+      transitions = [
+          Transition 1 sym updateReg 1
+        ]
+  in buildCRA 1 2 transitions [] initF finalF
+
 
 --
 -- Run two CRAs in parallel and combine the outputs (when defined) using the given function
@@ -170,7 +184,8 @@ iter (CRA numStates numRegs transitions eTransitions init final) startVal op =
         let noop = buildUpdateOp []
             updateAuxReg expr = M.singleton auxReg (PrimOp op [RegRead auxReg, expr])
 
-            initETrans = M.keys init & fmap (\t -> ETransition newInitState noop t)
+            -- initETrans = M.keys init & fmap (\t -> ETransition newInitState noop t) -- this is a bug cause we loose the op?
+            initETrans = M.toList init & fmap (\(t, o) -> ETransition newInitState o t)
             finalETrans = M.toList final & fmap (\(q, e) -> ETransition q (updateAuxReg e) newFinalState)
       
             internalETrans = M.keys init & fmap (\t -> ETransition newFinalState noop t)
@@ -181,16 +196,46 @@ iter (CRA numStates numRegs transitions eTransitions init final) startVal op =
   
   in CRA numStates' numRegs' transitions eTransitions' init' final'
 
-{-
-Add register for keeping track of aggregate value.
-Add an epsilon transition from unique final state to unique initial state.
-  - this transition updates the aggregate register
-Add new initial state which supplies the initial value of the aggregate register.
-Add new final state which produces the aggregate register value.
-...this might produce an ambiguous CRA so take the product with a (register free) DFA that accepts the right language (f*)
+--
+-- Delay the output by one element
+-- (Not one of the original QRE operators, but needed for things like inter-element differences.)
+--
+-- Warning: current impl of this is wrong... messes up when used below op.
+--
+lag :: (Hashable s, Eq s, Ord s) => d -> [s] -> CRA s d -> CRA s d
+lag startVal allSyms (CRA numStates numRegs transitions eTransitions init final) =
+  
+  let numStates' = numStates + 2
+      numRegs' = numRegs + 1
 
-What does it mean for a CRA to be ambiguous?
+      newLagState = numStates + 1
+      newFinalState = numStates + 2
+      auxReg = numRegs'
 
-Each input word has at most one accepting path.
+      transitions' = 
+        let lagTrans = fmap makeLagTrans allSyms
+              where makeLagTrans s = Transition newLagState s noop newFinalState
+                    noop = buildUpdateOp []
+            prevTrans = M.toList transitions & concatMap snd
+        in (lagTrans ++ prevTrans) & buildTransitionMap
+            
 
--}
+      eTransitions' =
+        let delayOp expr = M.singleton auxReg expr
+            delayETrans = M.toList final & fmap (\(q, e) -> ETransition q (delayOp e) newLagState)
+            prevETrans = M.toList eTransitions & concatMap snd
+        in (delayETrans ++ prevETrans) & buildETransitionMap
+
+      init' = M.map addStartVal init
+        where addStartVal op = M.insert auxReg (exprConst startVal) op
+      final' = M.fromList [(newFinalState, RegRead auxReg)]
+  
+  in CRA numStates' numRegs' transitions' eTransitions' init' final'
+
+
+--
+-- WARNING: when you connect multiple final states from the previous CRA to a single final state in the 
+-- combined CRA, you might induce ambiguity --- the same word might have multiple paths to that new single final state???
+--
+-- Probably the way to mitigate this is to add a new independent final state for each final state in the original CRA
+--

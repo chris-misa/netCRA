@@ -176,6 +176,7 @@ testQRE3 =
 testQRE4 :: CRA Char Int
 testQRE4 = iter (atom 'a' CurVal) 0 (primBinary (+))
 
+
 --
 -- Compute the difference between each data element
 -- Interestingly, it's hard to see how to implement this using QRE-based primitives
