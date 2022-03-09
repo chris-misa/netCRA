@@ -48,6 +48,10 @@ atom sym expr =
 --
 -- Lagy atom --- failsafe incase the more comprehensive lag doesn't workout
 -- ...still a bit buggy when combined with other QRE operators...
+-- =======================================================================================================================
+-- Actually, lag only makes sense for iter which produces a sequence of stateful results anyways...everything else is only matching maybe so this idea of lag is not really relevant...
+--
+-- Have to define something like iter-lag which has the same rate as iter (f*), but delays the produced result by one iteration.
 --
 lagtom :: (Hashable s, Eq s, Ord s) => s -> Expression d -> d -> CRA s d
 lagtom sym expr startVal =

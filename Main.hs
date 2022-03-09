@@ -176,10 +176,27 @@ testQRE3 =
 testQRE4 :: CRA Char Int
 testQRE4 = iter (atom 'a' CurVal) 0 (primBinary (+))
 
+--
+-- Matches (ab*c)* and returns the difference between each a, c pair
+--
+testQRE5 :: CRA Char Int
+testQRE5 =
+  iter
+    (split
+      (atom 'a' CurVal)
+      (split
+        (iter (atom 'b' CurVal) 0 (primBinary (+)))
+        (atom 'c' CurVal)
+        (primBinary (curry snd)))
+      (primBinary (\a c -> c - a)))
+    0
+    (primBinary (curry snd))
+
 
 --
 -- Compute the difference between each data element
 -- Interestingly, it's hard to see how to implement this using QRE-based primitives
+-- Seems like we need some kind of lag operator, but it's unclear how lag fits into the QRE way of thinking...
 --
 testDiff1 :: CRA Char Int
 testDiff1 = 
@@ -196,22 +213,6 @@ testDiff1 =
 --
 -- Combined tests with multiple QRE combinators
 --
-
---
--- Matches (ab*c)* and returns the difference between each a, c pair
---
-testQRE5 :: CRA Char Int
-testQRE5 =
-  iter
-    (split
-      (atom 'a' CurVal)
-      (split
-        (iter (atom 'b' CurVal) 0 (primBinary (+)))
-        (atom 'c' CurVal)
-        (primBinary (curry snd)))
-      (primBinary (\a c -> c - a)))
-    0
-    (primBinary (curry snd))
 
 main :: IO ()
 main = do
