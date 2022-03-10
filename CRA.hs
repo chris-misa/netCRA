@@ -471,16 +471,19 @@ makeDeterministic (CRA numStates numRegs transitions eTransitions init final) =
       
       worklist = M.singleton (M.keys init & IS.fromList) 1
       
-      doWork wl rl =
-        case M.fromList wl of
+      doWork wl rl trans =
+        case M.toList wl of
           (origStates, newState):theRest ->
             -- TODO:
-            -- compute epsilon closure for each of origStates
-            -- compute union of these closures as the potential new node
-            -- look up the potential new node's original states in theRest and rl
-            --    if it's not in either, add it to theRest
-            doWork (M.fromList theRest) (M.insert origStates newState rl)
-          [] -> rl
+            -- For each symbol:
+            --    for each transition from any of origStates on this symbol, compute the epsilon closure of the target state
+            --    compute union of these closures as the potential new node (as an int set)
+            --    look up the potential new node's original states in theRest and rl
+            --       if it's not in either, add it (i.e., the set of original states, and the new nodes' new state id) to theRest
+            --    add transition (to trans) in new state space whose operation is a combination of all update operations accumulated in the above process
+            --
+            doWork (M.fromList theRest) (M.insert origStates newState rl) trans
+          [] -> (rl, trans)
       
 
   in undefined
