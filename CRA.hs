@@ -9,6 +9,7 @@ module CRA where
 import Data.Function ((&))
 import qualified Data.List as L
 import qualified Data.HashMap.Strict as M -- from unordered-containers
+import qualified Data.IntSet as IS -- from containers
 import Data.Hashable (Hashable)
 import qualified Data.Set as St
 import Data.Maybe
@@ -451,21 +452,15 @@ getEpsilonClosure q etrans stateRegMap =
               in foldl oneETrans (combinedOp, states) ts
             Nothing -> (combinedOp, states)
 
--- TODO: The bug here is that we need to accumulate the input register mapping even when there's not a read!
--- ================================================
---
--- if we have 1 --> 2 --> 3, then any reads in 3 need to either be build on the results generated in 2 or w.r.t. ids of 1
--- maybe this is a modification to serializeUpdateOps?
---    ----------> easiest way to deal with it is to enforce (perhaps automatically?) that there's always at least self-read operations?
---    since then the existing mechanism will deal with propegating the right mappings
---
+-- Ensures that all epsilon transitions have at least a self-read update operation
+eliminateNoops :: Int -> ETransitionMap d -> ETransitionMap d
+eliminateNoops numRegs etrans =
+  M.map (fmap elimOne) etrans
+  where elimOne (ETransition q update t) =
+          let update' = update `M.union` ([1..numRegs] & fmap (\i -> (i, RegRead i)) & M.fromList)
+          in ETransition q update' t
 
-{-
- - need to go over each (sub)path along etrans from q
- - at each step we accumulate the operation that got to that node and add the node to the list
- -
- - 
- -}
+-- WARNING: need to eliminateNoops before going into getEpsilonClosure!
 
 -- Converts a possibly non-deterministic CRA to an equivalent deterministic CRA
 makeDeterministic :: (Hashable s, Eq s, Ord s) =>
@@ -473,7 +468,46 @@ makeDeterministic :: (Hashable s, Eq s, Ord s) =>
   -> CRA s d
 makeDeterministic (CRA numStates numRegs transitions eTransitions init final) =
   let numRegs' = numStates * numRegs
+      
+      worklist = M.singleton (M.keys init & IS.fromList) 1
+      
+      doWork wl rl =
+        case M.fromList wl of
+          (origStates, newState):theRest ->
+            -- TODO:
+            -- compute epsilon closure for each of origStates
+            -- compute union of these closures as the potential new node
+            -- look up the potential new node's original states in theRest and rl
+            --    if it's not in either, add it to theRest
+            doWork (M.fromList theRest) (M.insert origStates newState rl)
+          [] -> rl
+      
+
   in undefined
+
+{-
+ - Inputs:
+ -  - a non-deterministic, unambiguous CRA
+ -  - the set of all possible transition symbols
+ -
+ - Q <- closure(start states)
+ - while there is a node x in Q that doesn't have a transition for a symbol s,
+ -  compute the closure of all states reached from x on s
+ -  take their union and call it y
+ -  if y is not in Q, add it <---- need equality between nodes ... based on what? which or the original states they represent?
+ -  add an edge from x to y on s that executes all the different update operations accumulated (incld from computed closures)
+ -
+ - worklist implementation...
+ -
+ - add Q to work list
+ - while work list is not empty
+ -  take a node from work list and go through the process above for each symbol, adding any new nodes to the worklist
+ -  add the worked on node to the result list
+ -
+ - The work list and results list are maps from sets of states (IntSets!) to nodes in the new CRA
+ - because each time we compute a target set of states (union of closures) we have to check if we've considered that set of states before or note by looking it up in these lists.
+ -
+ -}
 
 -- NEED TO ASSUME INPUT CRA is unambiguous---otherwise this falls apart because you might have more than one register valuation at each state!
 
