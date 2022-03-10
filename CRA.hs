@@ -469,7 +469,7 @@ makeDeterministic :: (Hashable s, Eq s, Ord s) =>
 makeDeterministic (CRA numStates numRegs transitions eTransitions init final) =
   let numRegs' = numStates * numRegs
       
-      worklist = M.singleton (M.keys init & IS.fromList) 1
+      initWorklist = M.singleton (M.keys init & IS.fromList) 1
       
       doWork wl rl trans =
         case M.toList wl of
@@ -483,10 +483,22 @@ makeDeterministic (CRA numStates numRegs transitions eTransitions init final) =
             --    add transition (to trans) in new state space whose operation is a combination of all update operations accumulated in the above process
             --
             doWork (M.fromList theRest) (M.insert origStates newState rl) trans
-          [] -> (rl, trans)
+          [] -> (rl, buildTransitionMap trans)
       
+      (stateMap, transitions') = doWork initWorklist M.empty []
+      numStates' = M.size stateMap
 
-  in undefined
+      init' = undefined
+        -- TODO:
+        -- combine all operations into a single start operation that lands on state 1 (in the output state space)
+
+      final' = undefined
+        -- TODO:
+        -- need to somehow look up all final states from the original CRA in stateMap and then combine their expressions
+        -- we should be ok to have multiple final states
+  
+
+  in CRA numStates' numRegs' transitions' (buildETransitionMap []) init' final'
 
 {-
  - Inputs:
