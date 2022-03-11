@@ -286,7 +286,7 @@ control TestIngress(inout headers hdr,
       reg_data_t tmp2;
 
 
-      // load is a list of (reg_id, addr)
+      // load is a list of (reg_id, addr)  (note this is in order of lower, to higher order bits...)
       // we load each reg_id into the given addresses in scratch space
       // note that the first 32 bits of scratch_space are reserved for the data value.
       // also not that each address is a single byte and indexes into scratch space in 32-bit increments

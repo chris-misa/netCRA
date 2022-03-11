@@ -6,6 +6,7 @@ import qualified Data.HashMap.Strict as M
 
 import CRA
 import QRE
+import Compile
 
 --
 -- Example 3 from Alur et al., "Streamable Regular Transductions", Elsevier, 2019.
