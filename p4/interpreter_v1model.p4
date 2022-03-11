@@ -14,6 +14,7 @@
 #define UPDATE_OP_WIDTH 1000
 
 #define SCRATCH_SPACE_SIZE 1000
+#define SCRATCH_SPACE_STRIDE 32
 
 const bit<16> TYPE_IPV4 = 0x800;
 typedef bit<8> ip_protocol_t;
@@ -147,28 +148,42 @@ reg_data_t get_field(in field_id_t fid, in headers hdr, in metadata meta, in sta
     return ret;
 }
 
-reg_data_t apply_op(in op_id_t op, in reg_data_t old_val, in reg_data_t pkt_val) {
+reg_data_t apply_op(in op_id_t op, in reg_data_t left, in reg_data_t right) {
     reg_data_t res = 0;
-    if(op == 0){//update
-        res = pkt_val;
+
+    if (op == 0) { // const zero
+        res = 0;
     }
-    else if(op == 1){//sum
-        res = old_val + pkt_val;
+    else if (op == 1) { // const one
+        res = 1;
     }
-    else if(op == 2){//min
-        if(pkt_val < old_val){
-            res = pkt_val;
+    else if (op == 2) { // increment
+        res = right + 1;
+    }
+    else if (op == 3) { // decrement
+        res = right - 1;
+    }
+    else if (op == 4) { // add
+        res = left + right;
+    }
+    else if (op == 5) { // subtract
+        res = left - right;
+    }
+    else if (op == 6) { // minimum
+        if (right < left) {
+          res = right;
+        } else {
+          res = left;
         }
     }
-    else if(op == 3){//max
-        if(pkt_val > old_val){
-            res = pkt_val;
+    else if (op == 7) { // maximum
+        if (right > left) {
+          res = right;
+        } else {
+          res = left;
         }
     }
-    else if(op == 4){//avg EWMA
-        res = (pkt_val >> 1) + (old_val >> 1);
-    }
-    else{
+    else {
         res = 0;
     }
     return res;
@@ -274,32 +289,34 @@ control TestIngress(inout headers hdr,
       // load is a list of (reg_id, addr)
       // we load each reg_id into the given addresses in scratch space
       // note that the first 32 bits of scratch_space are reserved for the data value.
+      // also not that each address is a single byte and indexes into scratch space in 32-bit increments
 
       registers.read(tmp, (bit<32>)(load[7:0]));
-      scratch_space = scratch_space | ((bit<SCRATCH_SPACE_SIZE>)tmp << load[15:8]);
+      scratch_space = scratch_space | ((bit<SCRATCH_SPACE_SIZE>)tmp << (load[15:8] * SCRATCH_SPACE_STRIDE));
 
       registers.read(tmp, (bit<32>)(load[23:16]));
-      scratch_space = scratch_space | ((bit<SCRATCH_SPACE_SIZE>)tmp << load[31:24]);
+      scratch_space = scratch_space | ((bit<SCRATCH_SPACE_SIZE>)tmp << (load[31:24] * SCRATCH_SPACE_STRIDE));
 
       // Load data value into first 32 bits of scratch space.
       scratch_space[31:0] = meta.val;
       
       // update is a list of (op_code, left_addr, right_addr, out_addr)
+      // op codes with arity less than two simply ignore one (left) or both arguments
 
       op = (op_id_t)update[7:0];
-      tmp1 = (reg_data_t)(scratch_space >> update[15:8]);
-      tmp2 = (reg_data_t)(scratch_space >> update[23:16]);
+      tmp1 = (reg_data_t)(scratch_space >> (update[15:8] * SCRATCH_SPACE_STRIDE));
+      tmp2 = (reg_data_t)(scratch_space >> (update[23:16] * SCRATCH_SPACE_STRIDE));
       tmp = apply_op(op, tmp1, tmp2);
-      scratch_space = (scratch_space & ~((bit<SCRATCH_SPACE_SIZE>)0xFF << update[31:24]))
-                    | ((bit<SCRATCH_SPACE_SIZE>)tmp << update[31:24]);
+      scratch_space = (scratch_space & ~((bit<SCRATCH_SPACE_SIZE>)0xFFFF << (update[31:24] * SCRATCH_SPACE_STRIDE)))
+                    | ((bit<SCRATCH_SPACE_SIZE>)tmp << (update[31:24] * SCRATCH_SPACE_STRIDE));
 
       // store is a list of (addr, reg_id)
       // we write each addr in to the given reg_id
 
-      tmp = (reg_data_t)(scratch_space >> store[7:0]);
+      tmp = (reg_data_t)(scratch_space >> (store[7:0] * SCRATCH_SPACE_STRIDE));
       registers.write((bit<32>)store[15:8], tmp);
 
-      tmp = (reg_data_t)(scratch_space >> store[23:16]);
+      tmp = (reg_data_t)(scratch_space >> (store[23:16] * SCRATCH_SPACE_STRIDE));
       registers.write((bit<32>)store[31:24], tmp);
 
       cur_state.write(0, next_state);
