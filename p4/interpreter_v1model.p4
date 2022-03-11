@@ -266,7 +266,7 @@ control TestIngress(inout headers hdr,
             map_sym_val;
             no_op();
         }
-        size = 1;
+        size = 100;
         default_action = no_op();
     }
 

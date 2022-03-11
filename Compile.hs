@@ -7,11 +7,24 @@ module Compile where
 import Data.Function ((&))
 import Data.Word
 import Numeric (showHex)
+import Data.Hashable (Hashable)
 import qualified Data.List as L
 import qualified Data.HashMap.Strict as M
 import qualified Data.ByteString as B
 
 import CRA
+
+pipelineName = "TestIngress"
+
+preamble = [
+    "reset_state",
+    "table_add TestIngress.filter_match TestIngress.map_sym_val 0&&&0 0&&&0 0x06&&&0xFF 0&&&0 0&&&0 0&&&0 => 0 0 0",
+    "table_add TestIngress.filter_match TestIngress.map_sym_val 0&&&0 0&&&0 0x11&&&0xFF 0&&&0 0&&&0 0&&&0 => 1 0 0"
+  ]
+
+postamble =  [
+    "table_add TestIngress.ipv4_lpm TestIngress.ipv4_forward_to_mac 10.10.0.0/16 => 00:01:02:03:04:05 0"
+  ]
 
 -- 
 -- Prim ops that can be translated into switch hardware
@@ -69,7 +82,7 @@ instance Show UpdateIns where
 -- Convert an update op into low-level instructions
 -- In particular, produces the load, update and store instructions for the do_transition action
 --
-compileUpdateOp :: UpdateOp d -> UpdateIns
+compileUpdateOp :: UpdateOp Int -> UpdateIns
 compileUpdateOp op =
 
   let getReads regs (PrimOp po children) = concatMap (getReads regs) children ++ regs
@@ -104,11 +117,18 @@ compileUpdateOp op =
         in (ins' `B.append` ins, tos', storeMap')
       (updates, _, storeMap) = M.foldlWithKey' updateOne (B.empty, length reads + 1, initStoreMap) op
 
-      storeOne ins addr reg = fromIntegral reg `B.cons` fromIntegral addr `B.cons` ins
+      storeOne ins reg addr = fromIntegral reg `B.cons` fromIntegral addr `B.cons` ins
       stores = M.foldlWithKey' storeOne B.empty storeMap
 
-
   in UpdateIns loads updates stores
+
+compileTransitions :: TransitionMap Int Int -> [String]
+compileTransitions trans = M.elems trans & fmap (fmap oneTransition) & concatMap id
+  where oneTransition (Transition q s op t) = 
+          let UpdateIns loads updates stores = compileUpdateOp op
+          in "table_add " ++ pipelineName ++ ".transitions " ++ pipelineName ++ ".do_transition "
+              ++ show q ++ " " ++ show s ++ " 1 => "
+              ++ show t ++ " " ++ showByteString "" loads ++ " " ++ showByteString "" updates ++ " " ++ showByteString "" stores
 
 --
 -- Produces a configuration for p4/interpreter_v1model.p4 from the given CRA as a list of commands for bm_CLI
@@ -116,6 +136,35 @@ compileUpdateOp op =
 -- TODO: this also need to take some kind of spec for the "filter_match" table...
 -- Also, probably should fix the types between these two...
 --
--- compile :: (Hashable s, Eq s, Ord s) =>
---   CRA s d -> [String]
--- compile = undefined
+-- The minimal functional version uses some template for the filter_match stuff. Then we just need
+--
+-- compile transitions
+-- compile init function
+-- compile final function
+--
+compile :: CRA Int Int -> [String]
+compile (CRA numStates numRegs transitions eTransitions init final) =
+  preamble ++ compileTransitions transitions ++ postamble
+
+
+
+--
+-- Example 3 from Alur et al., "Streamable Regular Transductions", Elsevier, 2019.
+-- Counts the number of 'a's and 'b's emitting the count of the most recent tag.
+--
+compileTest1 :: CRA Int Int
+compileTest1 =
+  let initOp = buildUpdateOp [PrimOp primConstZero [], PrimOp primConstZero []]
+      addA = buildUpdateOp [PrimOp primAdd [RegRead 1, CurVal], RegRead 2]
+      addB = buildUpdateOp [RegRead 1, PrimOp primAdd [RegRead 2, CurVal]]
+      initF = buildInitFunc [(1, initOp)]
+      finalF = buildFinalFunc [(2, RegRead 1), (3, RegRead 2)]
+      transitions = [
+          Transition 1 0 addA 2,
+          Transition 1 1 addB 3,
+          Transition 2 0 addA 2,
+          Transition 2 1 addB 3,
+          Transition 3 1 addB 3,
+          Transition 3 0 addA 2
+        ]
+  in buildCRA 3 2 transitions [] initF finalF

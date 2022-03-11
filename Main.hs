@@ -3,6 +3,7 @@ module Main where
 import Data.Function ((&))
 
 import qualified Data.HashMap.Strict as M
+import qualified Data.List as L
 
 import CRA
 import QRE
@@ -209,6 +210,12 @@ testDiff1 =
           Transition 1 'a' updateOp 1
         ]
   in buildCRA 1 2 transitions [] initF finalF
+
+
+writeCompiledConfig :: String -> CRA Int Int -> IO ()
+writeCompiledConfig filepath cra =
+  let conf = compile cra & L.intercalate "\n"
+  in writeFile filepath conf
 
 
 --
