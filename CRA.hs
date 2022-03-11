@@ -462,18 +462,64 @@ eliminateNoops numRegs etrans =
 
 -- WARNING: need to eliminateNoops before going into getEpsilonClosure!
 
+-- WARNING: all calls to serializeUpdateOps can't be starting from empty maps below!
+
 -- Converts a possibly non-deterministic CRA to an equivalent deterministic CRA
 makeDeterministic :: (Hashable s, Eq s, Ord s) =>
-     CRA s d
+     [s]
   -> CRA s d
-makeDeterministic (CRA numStates numRegs transitions eTransitions init final) =
+  -> CRA s d
+makeDeterministic symbols (CRA numStates numRegs transitions eTransitions init final) =
   let numRegs' = numStates * numRegs
+      regMap = getRegMaps numStates numRegs
+
+      -- Combines the given operation, state-list pairs assuming operations have already been translated
+      combineStates (op, ts) (newOp, newTs) = (serializeUpdateOps op newOp, ts ++ newTs)
+
+      (initOp, initStates) =
+        M.keys init
+          & fmap (\q -> getEpsilonClosure q eTransitions regMap)
+          & foldl combineStates (M.empty, [])
+      initWorklist = M.singleton (IS.fromList initStates) 1
       
-      initWorklist = M.singleton (M.keys init & IS.fromList) 1
-      
-      doWork wl rl trans =
+      doWork wl rl trans numNewStates =
         case M.toList wl of
           (origStates, newState):theRest ->
+
+            let theRestMap = M.fromList theRest
+
+    
+                -- oneSymState produces the epsilon closure reached from (original) state q on transition sym
+                oneSymState (q, sym) =
+                  case M.lookup (q, sym) transitions of
+                    Just trans ->
+                      let doOneTrans (Transition _ _ op t) =
+                            let (eOp, ts) = getEpsilonClosure t (eliminateNoops numRegs eTransitions) regMap
+                                op' = serializeUpdateOps op eOp
+                            in (op', ts)
+                      in fmap doOneTrans trans & foldl combineStates (M.empty, [])
+                    Nothing -> (M.empty, [])
+
+                -- oneSym processes the combined transition from any state in origStates on sym producing (maybe) a new combined node and a single combined transition
+                oneSym (work, trans, num) sym =
+                  let (targetOp, targetStates) = IS.toList origStates & fmap (\q -> oneSymState (q, sym)) & foldl combineStates (M.empty, [])
+                      targetStatesSet = IS.fromList targetStates
+                  in case (M.lookup targetStatesSet rl, M.lookup targetStatesSet wl) of -- <--- we need to look up in both??...how do we know it's in one or the other not in both??? --- do we also have to look in our local accumulater `work`?
+                      (Just t, _) ->
+                        let newTrans = Transition newState sym targetOp t
+                        in (work, newTrans:trans, num)
+                      (Nothing, Just t) ->
+                        let newTrans = Transition newState sym targetOp t
+                        in (work, newTrans:trans, num)
+                      (Nothing, Nothing) ->
+                        let num' = num + 1
+                            newTrans = Transition newState sym targetOp num'
+                        in (M.insert targetStatesSet num' work, newTrans:trans, num')
+
+                (newWork, newTrans, numNewStates') = foldl oneSym (M.empty, [], numNewStates) symbols
+
+            in doWork (theRestMap `M.union` newWork) (M.insert origStates newState rl) (trans ++ newTrans) numNewStates'
+            
             -- TODO:
             -- For each symbol:
             --    for each transition from any of origStates on this symbol, compute the epsilon closure of the target state
@@ -482,17 +528,21 @@ makeDeterministic (CRA numStates numRegs transitions eTransitions init final) =
             --       if it's not in either, add it (i.e., the set of original states, and the new nodes' new state id) to theRest
             --    add transition (to trans) in new state space whose operation is a combination of all update operations accumulated in the above process
             --
-            doWork (M.fromList theRest) (M.insert origStates newState rl) trans
-          [] -> (rl, buildTransitionMap trans)
-      
-      (stateMap, transitions') = doWork initWorklist M.empty []
-      numStates' = M.size stateMap
 
-      init' = undefined
+          [] -> (rl, buildTransitionMap trans, numNewStates)
+      
+      (stateMap, transitions', numStates') = doWork initWorklist M.empty [] 1
+
+      init' =
+        let combineInitOps op (q, o) =
+              let rm = regMap M.! q
+              in serializeUpdateOps op (o & M.mapKeys (head . (M.!) rm)) -- shouldn't be any reads in init ops...
+            op = init & M.toList & foldl combineInitOps M.empty
+        in M.singleton 1 (serializeUpdateOps op initOp) -- execute first the init op, then any ops from epsilon transitions in initial closure
         -- TODO:
         -- combine all operations into a single start operation that lands on state 1 (in the output state space)
 
-      final' = undefined
+      final' = M.empty
         -- TODO:
         -- need to somehow look up all final states from the original CRA in stateMap and then combine their expressions
         -- we should be ok to have multiple final states
