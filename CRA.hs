@@ -8,7 +8,8 @@ module CRA where
 
 import Data.Function ((&))
 import qualified Data.List as L
-import qualified Data.HashMap.Strict as M -- from unordered-containers
+-- import qualified Data.HashMap.Strict as M -- from unordered-containers
+import qualified Data.HashMap.Lazy as M -- from unordered-containers
 import qualified Data.IntSet as IS -- from containers
 import Data.Hashable (Hashable)
 import qualified Data.Set as St
@@ -410,6 +411,90 @@ combine (CRA numStatesL numRegsL transitionsL eTransitionsL initL finalL) (CRA n
   in (CRA numStates numRegs transitions eTransitions M.empty M.empty, (stateMapL, regMapL), (stateMapR, regMapR))
 
 
+-- 
+-- Start functions for makeDeterministic
+------------------------------------------------------------
+
+-- Generates a map from state ids to register maps for each state id
+getRegMaps :: Int -> Int -> M.HashMap Int IdMap
+getRegMaps numStates numRegs = [1..numStates] & fmap regMapForState & M.fromList
+
+  where regMapForState q = (q, [1..numRegs] & fmap (\r -> (r, [r + ((q - 1) * numRegs)])) & M.fromList)
+-- Maps the registers read by the given expression using the given IdMap
+mapExprIns :: IdMap -> Expression d -> Expression d
+mapExprIns inputMap (PrimOp o e) = PrimOp o (fmap (mapExprIns inputMap) e)
+mapExprIns inputMap (RegRead i) = RegRead (head (inputMap M.! i))
+mapExprIns inputMap CurVal = CurVal
+
+-- Maps the register ids of all reads (inputs) and writes (outputs) of the given update operation
+mapUpdateOpInsOuts :: IdMap -> IdMap -> UpdateOp d -> UpdateOp d
+mapUpdateOpInsOuts inputMap outputMap o =
+  o & M.mapKeys (head . (M.!) outputMap) & M.map (mapExprIns inputMap)
+
+-- Ensures that all transitions have at least a self-read update operation
+eliminateTransNoops :: (Hashable s, Eq s, Ord s) => Int -> TransitionMap s d -> TransitionMap s d
+eliminateTransNoops numRegs trans =
+  M.map (fmap elimOne) trans
+  where elimOne (Transition q sym update t) =
+          let update' = update `M.union` ([1..numRegs] & fmap (\i -> (i, RegRead i)) & M.fromList)
+          in Transition q sym update' t
+
+-- Ensures that all epsilon transitions have at least a self-read update operation
+eliminateETransNoops :: Int -> ETransitionMap d -> ETransitionMap d
+eliminateETransNoops numRegs etrans =
+  M.map (fmap elimOne) etrans
+  where elimOne (ETransition q update t) =
+          let update' = update `M.union` ([1..numRegs] & fmap (\i -> (i, RegRead i)) & M.fromList)
+          in ETransition q update' t
+
+eliminateInitNoops :: Int -> InitFunc d -> InitFunc d
+eliminateInitNoops numRegs = M.map elimOne
+  where elimOne update = update `M.union` ([1..numRegs] & fmap (\i -> (i, error "read before write error")) & M.fromList)
+
+--
+-- Transforms all register references in the given CRA to be per-state
+-- In otherwords, an independent set of registers is added and updated for each state
+-- This simplifies reasoning about combining operations during state combinations in makeDeterministic
+--
+makeRegistersPerState :: (Hashable s, Eq s, Ord s) =>
+     CRA s d
+  -> CRA s d
+makeRegistersPerState (CRA numStates numRegs transitions eTransitions init final) =
+  let numRegs' = numStates * numRegs
+      transitions' = transitions & eliminateTransNoops numRegs & M.map (fmap oneTrans)
+      eTransitions' =  eTransitions & eliminateETransNoops numRegs & M.map (fmap oneETrans)
+      init' = init & eliminateInitNoops numRegs & M.mapWithKey oneInit
+      final' = final & M.mapWithKey oneFinal
+  in CRA numStates numRegs' transitions' eTransitions' init' final'
+
+  where regMap = getRegMaps numStates numRegs
+
+        oneTrans (Transition q sym update t) =
+          let update' = mapUpdateOpInsOuts (regMap M.! q) (regMap M.! t) update
+          in Transition q sym update' t
+
+        oneETrans (ETransition q update t) = 
+          let update' = mapUpdateOpInsOuts (regMap M.! q) (regMap M.! t) update
+          in ETransition q update' t
+
+        oneInit q = mapUpdateOpInsOuts (error "init should not read anything!") (regMap M.! q)
+
+        oneFinal q = mapExprIns (regMap M.! q)
+
+-- TODO: there's an issue with init...
+-- Seems like in many cases (e.g., QRE combs), we don't get all registers referenced in the init function
+-- They might get written to later (before being read from), but the current transformation
+-- tries to read them on any transition untill they are written to.
+--
+-- How to handle this:
+-- 1. default error value doesn't work (for some reason it gets evaluated anyway (?)
+--        ----> because HashMap.Strict evals keys amd values to WHNF when stored in map... use .Lazy instead?
+--        ... haha, it does work with HashMap.Lazy ... might still want to have have Error String :: Expression d
+--        cause otherwise we can't ever print these for debugging...
+-- 2. force all combinators to initialize all registers --- tediuous, prone to future errors (?)
+--
+
+
 -- Combines the given update operations in serial---simulates updates by o1 being read by o2
 serializeUpdateOps :: UpdateOp d -> UpdateOp d -> UpdateOp d
 serializeUpdateOps o1 o2 =
@@ -419,21 +504,6 @@ serializeUpdateOps o1 o2 =
                                     Just expr -> expr
                                     Nothing -> RegRead i
         pullPrevOp CurVal = CurVal
-
-
--- Maps the register ideas of all reads (inputs) and writes (outputs) of the given update operation
-mapUpdateOpsInsOuts :: IdMap -> IdMap -> UpdateOp d -> UpdateOp d
-mapUpdateOpsInsOuts inputMap outputMap o =
-  o & M.mapKeys (head . (M.!) outputMap) & M.map mapInputs
-  where mapInputs (PrimOp o e) = PrimOp o (fmap mapInputs e)
-        mapInputs (RegRead i) = RegRead (head (inputMap M.! i))
-        mapInputs CurVal = CurVal
-
-
--- Generates a map from state ids to register maps for each state id
-getRegMaps :: Int -> Int -> M.HashMap Int IdMap
-getRegMaps numStates numRegs = [1..numStates] & fmap regMapForState & M.fromList
-  where regMapForState q = (q, [1..numRegs] & fmap (\r -> (r, [r + ((q - 1) * numRegs)])) & M.fromList)
 
 -- Computes the epsilon closure of given node q
 -- For CRA's, the epsilon closure includes a combined operation that must be executed before the closure is entered
@@ -446,23 +516,17 @@ getEpsilonClosure q etrans stateRegMap =
           case M.lookup q etrans of
             Just ts ->
               let oneETrans (o, ss) (ETransition q update t) =
-                    let o' = serializeUpdateOps o (mapUpdateOpsInsOuts (stateRegMap M.! q) (stateRegMap M.! t) update)
+                    let o' = serializeUpdateOps o (mapUpdateOpInsOuts (stateRegMap M.! q) (stateRegMap M.! t) update)
                         ss' = t:ss
                     in recEClosure t o' ss'
               in foldl oneETrans (combinedOp, states) ts
             Nothing -> (combinedOp, states)
 
--- Ensures that all epsilon transitions have at least a self-read update operation
-eliminateNoops :: Int -> ETransitionMap d -> ETransitionMap d
-eliminateNoops numRegs etrans =
-  M.map (fmap elimOne) etrans
-  where elimOne (ETransition q update t) =
-          let update' = update `M.union` ([1..numRegs] & fmap (\i -> (i, RegRead i)) & M.fromList)
-          in ETransition q update' t
 
 -- WARNING: need to eliminateNoops before going into getEpsilonClosure!
 
 -- WARNING: all calls to serializeUpdateOps can't be starting from empty maps below!
+--
 
 -- Converts a possibly non-deterministic CRA to an equivalent deterministic CRA
 makeDeterministic :: (Hashable s, Eq s, Ord s) =>
@@ -470,6 +534,10 @@ makeDeterministic :: (Hashable s, Eq s, Ord s) =>
   -> CRA s d
   -> CRA s d
 makeDeterministic symbols (CRA numStates numRegs transitions eTransitions init final) =
+
+  -- TODO: just translate / remove noops up front so it's easier to reason about things below...
+  -- using makeRegistersPerState
+
   let numRegs' = numStates * numRegs
       regMap = getRegMaps numStates numRegs
 
@@ -488,13 +556,12 @@ makeDeterministic symbols (CRA numStates numRegs transitions eTransitions init f
 
             let theRestMap = M.fromList theRest
 
-    
                 -- oneSymState produces the epsilon closure reached from (original) state q on transition sym
                 oneSymState (q, sym) =
                   case M.lookup (q, sym) transitions of
                     Just trans ->
                       let doOneTrans (Transition _ _ op t) =
-                            let (eOp, ts) = getEpsilonClosure t (eliminateNoops numRegs eTransitions) regMap
+                            let (eOp, ts) = getEpsilonClosure t (eliminateETransNoops numRegs eTransitions) regMap
                                 op' = serializeUpdateOps op eOp
                             in (op', ts)
                       in fmap doOneTrans trans & foldl combineStates (M.empty, [])

@@ -188,7 +188,6 @@ iter (CRA numStates numRegs transitions eTransitions init final) startVal op =
         let noop = buildUpdateOp []
             updateAuxReg expr = M.singleton auxReg (PrimOp op [RegRead auxReg, expr])
 
-            -- initETrans = M.keys init & fmap (\t -> ETransition newInitState noop t) -- this is a bug cause we loose the op?
             initETrans = M.toList init & fmap (\(t, o) -> ETransition newInitState o t)
             finalETrans = M.toList final & fmap (\(q, e) -> ETransition q (updateAuxReg e) newFinalState)
       
