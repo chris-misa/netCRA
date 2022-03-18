@@ -13,6 +13,7 @@ import qualified Data.HashMap.Strict as M
 import qualified Data.ByteString as B
 
 import CRA
+import Utils
 
 pipelineName = "TestIngress"
 
@@ -67,8 +68,6 @@ primOpMap = M.fromList [
 
 showByteString :: String -> B.ByteString -> String
 showByteString inter = ("0x"++) . (concatMap (\x -> if x < 16 then "0" ++ showHex x inter else showHex x inter)) . B.unpack
-
-unique = map head . L.group . L.sort
 
 data UpdateIns = UpdateIns B.ByteString B.ByteString B.ByteString
 
