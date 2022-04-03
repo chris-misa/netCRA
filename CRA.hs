@@ -548,6 +548,8 @@ makeDeterministic cra =
 -- 
 -- Internal makeDeterministic impl. assuming registers are already per-state disjoint and distinct states already known
 --
+-- The input CRA must be unambiguous!
+--
 makeDeterministicInternal :: (Hashable s, Eq s, Ord s) =>
      [s]
   -> CRA s d
@@ -615,68 +617,13 @@ makeDeterministicInternal symbols (CRA numStates numRegs transitions eTransition
         let op = M.elems init & foldl serializeUpdateOps M.empty
         in M.singleton 1 (serializeUpdateOps op initOp) -- execute first the init op, then any ops from epsilon transitions in initial closure
 
-      final' = M.empty
-        -- TODO:
-        -- need to somehow look up all final states from the original CRA in stateMap and then combine their expressions
-        -- we should be ok to have multiple final states
-        --
-        -- The trick is that we produce stateMap which maps from sets of original states in the input state space to a single
-        -- combined state in the output space...we have to somehow flatten the keys here so we can get the
-        -- input to output space mapping per-input-space...
-  
+      final' =
+        let oldStateMap = M.toList stateMap
+                        & concatMap (\(oldStates, newState) -> [(old, newState) | old <- IS.toList oldStates])
+                        & M.fromList
+        in final & M.mapKeys ((M.!) oldStateMap)
+        -- Assumes that each new combined state includes at most one original final state.
+        -- This assumption should hold so long as the original CRA was unambiguous.
+        -- (Otherwise there would be two terminating traces for the same input word.)
 
   in CRA numStates' numRegs transitions' (buildETransitionMap []) init' final'
-
-{-
- - Inputs:
- -  - a non-deterministic, unambiguous CRA
- -  - the set of all possible transition symbols
- -
- - Q <- closure(start states)
- - while there is a node x in Q that doesn't have a transition for a symbol s,
- -  compute the closure of all states reached from x on s
- -  take their union and call it y
- -  if y is not in Q, add it <---- need equality between nodes ... based on what? which or the original states they represent?
- -  add an edge from x to y on s that executes all the different update operations accumulated (incld from computed closures)
- -
- - worklist implementation...
- -
- - add Q to work list
- - while work list is not empty
- -  take a node from work list and go through the process above for each symbol, adding any new nodes to the worklist
- -  add the worked on node to the result list
- -
- - The work list and results list are maps from sets of states (IntSets!) to nodes in the new CRA
- - because each time we compute a target set of states (union of closures) we have to check if we've considered that set of states before or note by looking it up in these lists.
- -
- -}
-
--- NEED TO ASSUME INPUT CRA is unambiguous---otherwise this falls apart because you might have more than one register valuation at each state!
-
-{-
- - Make deterministic simulates evaluation keeping track of the sets of active state at each step
- - Here, each transition might do different updates so each combined state needs an independent set of registers
- - for each original state.
- -
- - Transitions in the output then combine operations of all transitions between the state sets in the input, but
- - separate the sets of registers read from and written to based on the states of the transition on the input side.
- -
- - The kind of interesting thing is that registers are a CRA-global concept whereas here we're talking about sets of registers
- - at each (combined) states being dependent on the (local) transitions / absorbed states...
- -  -> the easiest thing to do whould be to initial set up a set of registers for each state so there's a single deterministic
- -     and global state-to-register-set mapping to use during this process, then later go back and minimize the number of registers
- -     required...
- -     -> map any register reads to the register set of the originating state
- -     -> map any register writes to the register set of the destination state
- -
- - Also need to deal with epsilon transitions.... should this be a separate step (perhaps before making deterministic)?
- -  -> The epsolon closure of a node is a set of nodes and a combined transition (to be executed before reaching the combined node!)
- -     that updates the register sets of all nodes reached via an epsilon-transition.
- -  -> The tricky thing is that this combined transition must be generated for each path (and subpath) along the epsilon transitions
- -     eminating from the node which requires sequential combination of the original transition operations...
- -
- - Tasks:
- - - implement serial combination of transition operations (preserving register ids)
- - - implement the main bit
- - - implement register minimization (or maybe wait till after DFA minimization to do this?)
- -}
