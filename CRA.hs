@@ -3,6 +3,8 @@
  -}
 
 {-# LANGUAGE GADTs #-}
+{-# LANGUAGE TypeSynonymInstances #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module CRA where
 
@@ -531,6 +533,13 @@ getEpsilonClosure q etrans =
               in foldl oneETrans (combinedOp, states) ts
             Nothing -> (combinedOp, states)
 
+-- 
+-- Computes a list of all distinct transition symbols used in the given CRA
+--
+getTransitionSymbols :: (Hashable s, Eq s, Ord s) => CRA s d -> [s]
+getTransitionSymbols (CRA _ _ trans _ _ _) =
+  M.elems trans & concatMap (fmap (\(Transition _ sym _ _) -> sym)) & unique
+
 --
 -- Converts a possibly non-deterministic CRA to an equivalent deterministic CRA
 --
@@ -540,13 +549,12 @@ makeDeterministic :: (Hashable s, Eq s, Ord s) =>
      CRA s d
   -> CRA s d
 makeDeterministic cra =
-  let cra'@(CRA _ _ trans _ _ _) = makeRegistersPerState cra
-      symbols = M.elems trans & concatMap (fmap (\(Transition _ sym _ _) -> sym)) & unique
+  let cra' = makeRegistersPerState cra
+      symbols = getTransitionSymbols cra'
   in makeDeterministicInternal symbols cra'
 
-
 -- 
--- Internal makeDeterministic impl. assuming registers are already per-state disjoint and distinct states already known
+-- Internal makeDeterministic impl. assuming registers are already per-state disjoint and distinct transition symbols already known
 --
 -- The input CRA must be unambiguous!
 --
@@ -627,3 +635,67 @@ makeDeterministicInternal symbols (CRA numStates numRegs transitions eTransition
         -- (Otherwise there would be two terminating traces for the same input word.)
 
   in CRA numStates' numRegs transitions' (buildETransitionMap []) init' final'
+
+
+
+
+-- 
+-- Start functions for minRegs
+------------------------------------------------------------
+-- Note: these function all assume the CRA has already passed makeDeterministic
+-- In particular, they assume there are no epsilon transitions and a single initial stage
+--
+
+
+-- RegModifier is a union of everything that can modify a register
+data RegModifier s d = RMInit (InitFunc d) | RMTrans (Transition s d) | RMFinal (Expression d)
+  deriving (Show)
+
+-- Return the set of register ids defined by this modifier
+rmDefined :: (Hashable s, Eq s, Ord s) => RegModifier s d -> IS.IntSet
+rmDefined (RMInit init)
+  | M.size init == 1 = M.elems init & head & M.keys & IS.fromList
+  | otherwise = error "More than one initial state in CRA given to minRegs"
+rmDefined (RMTrans (Transition _ _ op _)) =
+  M.keys op & IS.fromList
+rmDefined (RMFinal _) =
+  IS.empty
+
+-- Utility to compute the set of register ids read in the given expression
+getReadRegs :: Expression d -> IS.IntSet
+getReadRegs (PrimOp _ exprs) = fmap getReadRegs exprs & foldl IS.union IS.empty
+getReadRegs (RegRead i) = IS.singleton i
+getReadRegs CurVal = IS.empty
+getReadRegs (ExprError e) = error e
+
+-- Return the set of register ids used (read) by this modifier
+rmUsed :: (Hashable s, Eq s, Ord s) => RegModifier s d -> IS.IntSet
+rmUsed (RMInit _) =
+  IS.empty
+rmUsed (RMTrans (Transition _ _ op _)) =
+  M.elems op & fmap getReadRegs & foldl IS.union IS.empty
+rmUsed (RMFinal expr) =
+  getReadRegs expr
+  
+
+-- Return a list of this modifiers successors along the given CRA's topology
+rmSuccessors :: (Hashable s, Eq s, Ord s) => RegModifier s d -> CRA s d -> [RegModifier s d]
+rmSuccessors (RMInit init) cra@(CRA _ _ trans _ _ _)
+  | M.size init == 1 =
+      let allSymbs = getTransitionSymbols cra
+          q = M.keys init & head
+      in repeat q `zip` allSymbs
+        & fmap (trans M.!?)
+        & filter isJust
+        & fmap fromJust
+        & concatMap id
+        & fmap RMTrans
+  | otherwise = error "More than one initial state in CRA given to minRegs"
+rmSuccessors (RMTrans (Transition _ _ _ t)) cra =
+  undefined -- TODO
+rmSuccessors (RMFinal _) _ = []
+
+
+
+
+
