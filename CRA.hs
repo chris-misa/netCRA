@@ -680,20 +680,70 @@ rmUsed (RMFinal expr) =
 
 -- Return a list of this modifiers successors along the given CRA's topology
 rmSuccessors :: (Hashable s, Eq s, Ord s) => RegModifier s d -> CRA s d -> [RegModifier s d]
-rmSuccessors (RMInit init) cra@(CRA _ _ trans _ _ _)
+rmSuccessors (RMInit init) cra@(CRA _ _ trans _ _ final)
   | M.size init == 1 =
       let allSymbs = getTransitionSymbols cra
           q = M.keys init & head
-      in repeat q `zip` allSymbs
-        & fmap (trans M.!?)
-        & filter isJust
-        & fmap fromJust
-        & concatMap id
-        & fmap RMTrans
+          
+          -- One type of successor is a final function
+          fs = case M.lookup q final of
+                Just expr -> [RMFinal expr]
+                Nothing -> []
+
+          -- The other type is a transition
+          ts = repeat q `zip` allSymbs
+              & fmap (trans M.!?)
+              & filter isJust
+              & fmap fromJust
+              & concatMap id
+              & fmap RMTrans
+      in fs ++ ts
   | otherwise = error "More than one initial state in CRA given to minRegs"
-rmSuccessors (RMTrans (Transition _ _ _ t)) cra =
-  undefined -- TODO
+rmSuccessors (RMTrans (Transition _ _ _ t)) cra@(CRA _ _ trans _ _ final) =
+  let allSymbs = getTransitionSymbols cra
+      
+      -- One type of successor is a final function
+      fs = case M.lookup t final of
+            Just expr -> [RMFinal expr]
+            Nothing -> []
+
+      -- The other type is a transition
+      ts = repeat t `zip` allSymbs
+          & fmap (trans M.!?)
+          & filter isJust
+          & fmap fromJust
+          & concatMap id
+          & fmap RMTrans
+  in fs ++ ts
 rmSuccessors (RMFinal _) _ = []
+
+
+-- 
+-- Live variable analysis produces a list/set of live variables going into and out of each initFunc, transition, and finalFun
+-- How we represent this depends on how we plan on using it of course...
+-- ... need to ultimately produce a map for each initFunc, transition, and finalFun from their original register ids to the updated register ids and a total number of register ids...
+--
+-- Take 1:
+-- let rm be a register modifier
+--   we know the set of live registers going into and coming out of rm.
+--   (also know mapping from parent rm from original register space to output register space.) <--- there's no sense of parent here: multiple previous register modifiers could have got us here...
+--   Any reads in this rm have to be updated w.r.t. parent mapping.
+--   Have to decide which registers this rm updates and compute an updated mapping to pass to successor.
+--
+-- Take 2:
+-- Have to some how figure out each group of inter-rm transitions and come up with a mapping that all defining and using rms agree on
+-- But aren't these inter-rm groups just the states of the CRA?
+--
+-- General:
+-- Each state in the CRA has a set of rms that happen before that state is active and a set of rms that happen after that state is active.
+-- Compute union of all live-out registers of before rms and union of all live-in registers of after rms.
+--   ... compute union of both of these sets to get the total number of registers needed at the state.
+--   ... compute mappings for writes in the before rms and for reads in the after rms to use only as many registers as needed.
+--
+
+
+
+
 
 
 
