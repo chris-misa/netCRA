@@ -12,11 +12,11 @@ let
 in
 pkgs.stdenv.mkDerivation rec {
     pname = "p4c";
-    version = "1.2.2.1";
+    version = "1.2.3.3";
 
     src = builtins.fetchTarball {
-        url = "https://github.com/p4lang/p4c/archive/refs/tags/v1.2.2.1.tar.gz";
-        sha256 = "1jp1psbwf1jp75zi6m8mlzwwbywsf6vhis2zn30pwdkfwjxsyqg2";
+        url = "https://github.com/p4lang/p4c/archive/refs/tags/v1.2.3.3.tar.gz";
+        sha256 = "0mlv7lgzm9jsn3p5jfcjap94cqckrhwm69z7xvvxcgvpi24m1raq";
     };
 
     buildInputs = with pkgs; [

@@ -678,7 +678,7 @@ rmUsed (RMFinal expr) =
   getReadRegs expr
   
 
--- Return a list of this modifiers successors along the given CRA's topology
+-- Return a list of this modifier's successors along the given CRA's topology
 rmSuccessors :: (Hashable s, Eq s, Ord s) => RegModifier s d -> CRA s d -> [RegModifier s d]
 rmSuccessors (RMInit init) cra@(CRA _ _ trans _ _ final)
   | M.size init == 1 =
@@ -716,6 +716,54 @@ rmSuccessors (RMTrans (Transition _ _ _ t)) cra@(CRA _ _ trans _ _ final) =
           & fmap RMTrans
   in fs ++ ts
 rmSuccessors (RMFinal _) _ = []
+
+
+-- 
+-- Given a list of register modifiers (and associated ids), computes the sets of live-in and live-out variables for each register
+-- modifier
+--
+-- Maybe this should deal with maps from the (caller-assigned) id to the register modifier?
+-- ...makes looking up the live-in set for other register modifiers easier below...
+-- ...except that rmSuccessors would also need to return the register modifier ids (not just a list of register modifiers...
+-- ...seems like rmSuccessors has to be updated anyway: can't just be making new RegModifier on the fly like that!
+-- ...we might need a more explicit representation (e.g., using HashMaps) of the topology between register modifiers...
+-- ... need to reconnect with already allocated RegModifiers in succ for the fixed point thing to work at all.
+--
+-- TODO: this doesn't compile...
+-- liveVariables :: (Hashable s, Eq s, Ord s) => CRA s d -> [(Int, RegModifier s d)] -> [(Int, RegModifier s d, IS.IntSet, IS.IntSet)]
+-- liveVariables cra rms = 
+--   let initInsOuts = fmap (\(id, rm) -> (id, rm, IS.empty, IS.empty)) rms
+--   in recLiveVars initInsOuts
+-- 
+--   where recLiveVars insOuts =
+--           let res = fmap updateOne insOuts
+--               done = fmap res fst & foldl (||) False
+--               insOuts' = fmap res snd
+--           in if done then insOuts'
+--              else recLiveVars insOuts'
+-- 
+--           where updateOne (id, rm, liveIn, liveOut) =
+--                   let liveIn' = rmUsed rm `IS.union` (liveOut `IS.difference` rmDefined rm)
+--                       liveOut' = let succIns = rmSuccessors rm cra & fmap rmIn -- here's the tricky bit: we need live-in for all succs!!
+--                                  in foldl `IS.union` IS.empty succIns
+--                   in (id, rm, liveIn', liveOut')
+            
+
+-- 
+-- Produces a map from state ids to pairs of live-in and live-out registers
+--
+perStateLiveVariables :: (Hashable s, Eq s, Ord s) => CRA s d -> M.HashMap Int (IS.IntSet, IS.IntSet)
+perStateLiveVariables = undefined
+
+-- 
+-- Produces an equivalent CRA that uses as few registers as possible
+--
+minimizeRegisters :: (Hashable s, Eq s, Ord s) => CRA s d -> CRA s d
+minimizeRegisters = undefined
+
+
+
+
 
 
 -- 

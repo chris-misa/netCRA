@@ -194,6 +194,11 @@ testQRE5 =
     0
     (primBinary (curry snd))
 
+testQRE6 :: CRA Char Int
+testQRE6 =
+  split (iter (ifelse (atom 'a' CurVal) (atom 'b' CurVal)) 0 (primBinary (+))) (split (atom 'a' CurVal) (atom 'b' CurVal) (primBinary (-))) (primBinary (+))
+
+-- Note: use runList to run these
 
 --
 -- Compute the difference between each data element
